@@ -1,0 +1,29 @@
+﻿[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sunat-file-pipeline"
+version = "0.1.0"
+description = "Pipeline liviano para archivos SUNAT"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "polars==1.30.0",
+  "pyarrow==20.0.0",
+  "deltalake==0.18.2",
+  "dbfread==2.0.7",
+  "openpyxl==3.1.5",
+  "fastexcel==0.13.0",
+  "pydantic==2.11.4",
+  "pydantic-settings==2.9.1",
+  "python-dotenv==1.1.0",
+  "typer==0.15.4",
+  "loguru==0.7.3",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

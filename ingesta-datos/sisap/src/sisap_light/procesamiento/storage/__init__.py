@@ -1,0 +1,2 @@
+"""Persistencia local del proyecto."""
+

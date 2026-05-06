@@ -1,0 +1,58 @@
+from datetime import timedelta
+
+from sisap_light.config import get_settings
+from sisap_light.ingesta_datos.extractores.http_client import SisapHttpClient
+from sisap_light.procesamiento.parsers.html_forms import extract_hidden_inputs, extract_post_id
+from sisap_light.schemas import SisapQuery
+
+
+class SisapMayoristaExtractor:
+    def __init__(self):
+        self.settings = get_settings()
+        self.base_url = self.settings.sisap_base_url
+        self.report_url = self.settings.sisap_report_url
+        self.client = SisapHttpClient()
+
+    def fetch_home(self) -> str:
+        return self.client.get(self.base_url)
+
+    def build_payload(self, query: SisapQuery, home_html: str, variable: str = "volumen") -> dict[str, str]:
+        hidden = extract_hidden_inputs(home_html)
+        post_id = extract_post_id(home_html) or hidden.get("postID", "")
+        fecha_fin = query.fecha_fin.strftime("%d/%m/%Y")
+        fecha_inicio = query.fecha_inicio.strftime("%d/%m/%Y")
+        semana = str((query.fecha_fin.timetuple().tm_yday - 1) // 7 + 1)
+
+        payload = {
+            "mercado": query.mercado_codigo or self.settings.sisap_mercado_codigo,
+            "variables[]": variable,
+            "procedencias[]": query.procedencia_codigo or "",
+            "fecha": fecha_fin,
+            "desde": fecha_inicio,
+            "hasta": fecha_fin,
+            "anios[]": str(query.fecha_fin.year),
+            "meses[]": query.fecha_fin.strftime("%m"),
+            "semanas[]": semana,
+            "productos[]": query.producto_codigo,
+            "producto": "NA",
+            "periodicidad": "intervalo",
+            "unMes": "",
+            "varFechaAnio": "",
+            "varFechaMes": "",
+            "varFechaSemana": "",
+            "varDiaAnterior": "",
+            "varMesAnioAnterior": "",
+            "varMesAnterior": "",
+            "checkANivelDiario": "",
+            "grafPromedioYDesvEs": "",
+            "grafPromedioYRango": "",
+            "__ajax_carga_final": hidden.get("__ajax_carga_final", "consulta"),
+            "postID": post_id,
+        }
+        return payload
+
+    def fetch_report(self, query: SisapQuery, variable: str = "volumen") -> str:
+        home_html = self.fetch_home()
+        payload = self.build_payload(query=query, home_html=home_html, variable=variable)
+        return self.client.post(self.report_url, data=payload)
+

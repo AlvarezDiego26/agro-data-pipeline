@@ -1,0 +1,12 @@
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.env
+**/data/raw/
+**/data/clean/
+**/data/clean_delta/
+**/data/inbox/
+**/data/processed/
+**/data/error/
+**/data/review/
+**/CHECKLIST_FINAL_*.md
