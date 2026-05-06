@@ -25,3 +25,10 @@ Cada fuente mantiene:
 - `SISAP` y `SUNAT` son pipelines independientes
 - ambos deben poder ejecutarse desde un `CLI` principal
 - el scheduler debe invocar wrappers, no reimplementar logica
+
+## Convencion de storage
+- el bucket usa una carpeta raiz comun:
+  - `Landing/`
+- dentro de `Landing/` cada fuente mantiene su propio espacio:
+  - `Landing/sisap/`
+  - `Landing/sunat/`

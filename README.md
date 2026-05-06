@@ -12,6 +12,13 @@ Repositorio principal de pipelines de ingesta para fuentes agrarias.
   - `sisap/`: pipeline de volumen, precios y ciudades
   - `sunat/`: pipeline de importacion y filtrado de exportaciones agrarias frescas
 
+## Estructura esperada en bucket
+- `Landing/`
+  - `sisap/`
+  - `sunat/`
+
+Cada pipeline escribe sus tablas `Delta Parquet` dentro de `Landing/<fuente>/...`.
+
 ## Principios del proyecto
 - herramientas ligeras para servidor
 - configuracion por `.env`

@@ -71,14 +71,14 @@ Los wrappers `run_sisap_master.ps1` y `run_sisap_suite.ps1` quedan solo como com
 
 ## Delta y MinIO
 - `STORAGE_BACKEND=local` guarda Delta en `data/clean_delta/...`
-- `STORAGE_BACKEND=minio` guarda Delta en `s3://<BUCKET_NAME>/landing/sisap/...`
+- `STORAGE_BACKEND=minio` guarda Delta en `s3://<BUCKET_NAME>/Landing/sisap/...`
 - `DELTA_ENABLED=true` activa escritura Delta
 
 ## Estructura esperada en bucket
-- `<BUCKET_NAME>/landing/sisap/volumen_diario/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/landing/sisap/precios_diarios/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/landing/sisap/ciudades_precios_mayoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/landing/sisap/ciudades_precios_minoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/volumen_diario/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/precios_diarios/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/ciudades_precios_mayoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/ciudades_precios_minoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
 
 ## Comandos auxiliares
 ```powershell

@@ -10,6 +10,7 @@ Pipeline liviano para archivos SUNAT orientado a exportaciones agrarias frescas.
 - conservar productos agrarios nuevos con IDs propios estables
 - calcular precio FOB en USD por kilogramo
 - guardar una sola salida final en `Parquet` y su tabla `Delta`
+- escribir las tablas en `Landing/sunat/` dentro del bucket
 
 ## Flujo final
 1. `inbox`
@@ -39,6 +40,10 @@ Pipeline liviano para archivos SUNAT orientado a exportaciones agrarias frescas.
   - `data/raw/sunat_exportaciones_agrarias_frescas_raw.parquet`
 - delta final:
   - `data/clean_delta/sunat_exportaciones_agrarias_frescas`
+
+## Estructura esperada en bucket
+- `<BUCKET_NAME>/Landing/sunat/sunat_exportaciones_base`
+- `<BUCKET_NAME>/Landing/sunat/sunat_exportaciones_agrarias_frescas`
 
 ## Archivos de revision
 - `data/review/sunat_exportaciones_frescas_preview.csv`

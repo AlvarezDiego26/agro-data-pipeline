@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = ''
     minio_bucket: str = 'nombre-del-bucket'
     minio_region: str = 'us-east-1'
-    minio_prefix: str = 'landing/sisap'
+    minio_prefix: str = 'Landing/sisap'
 
     sisap_output_dir: Path = Field(default=Path('data/raw'))
 
