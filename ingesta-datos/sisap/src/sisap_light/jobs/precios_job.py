@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -8,13 +8,20 @@ from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
+    append_partitioned_output,
     build_scope_output_dir,
     filter_plan,
-    finalize_partitioned_output,
+    init_control_states,
+    persist_control_states,
+    persist_control_event,
+    register_control_failure,
+    register_control_query,
+    register_control_success,
     resolve_item,
     resolve_productos,
     resolve_query_dates,
 )
+from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_tables import extract_report_titles, extract_tables
 from sisap_light.ingesta_datos.planners import build_mayorista_queries
 from sisap_light.schemas import ModuloSisap, SisapQuery
@@ -23,42 +30,47 @@ from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.precios import build_precio_metric_frame, merge_precio_metrics
 from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
 
-PRICE_VARIABLES = ["precio_min", "precio_prom", "precio_max"]
+PRICE_VARIABLES = ['precio_min', 'precio_prom', 'precio_max']
 EXPECTED_COLUMNS = [
-    "fecha",
-    "producto_codigo",
-    "producto_nombre",
-    "variedad",
-    "procedencia",
-    "precio_min",
-    "precio_prom",
-    "precio_max",
+    'fecha',
+    'producto_codigo',
+    'producto_nombre',
+    'variedad',
+    'procedencia',
+    'precio_min',
+    'precio_prom',
+    'precio_max',
 ]
 MAX_SAMPLE_QUERIES = 12
 
 
-def _resolve_procedencia() -> dict:
+def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
     settings = get_settings()
     return resolve_item(
         PROCEDENCIAS_SISAP,
         settings.sisap_procedencia_codigo,
-        settings.sisap_procedencia_nombre,
-        "la procedencia",
+        procedencia_nombre or settings.sisap_procedencia_nombre,
+        'la procedencia',
     )
 
 
-def _build_raw_plan() -> list[SisapQuery]:
+def _build_raw_plan(
+    procedencia_nombre: str | None = None,
+    productos_override: list[dict] | None = None,
+) -> list[SisapQuery]:
     settings = get_settings()
-    procedencia = _resolve_procedencia()
-    productos = resolve_productos(settings.sisap_producto_codigo, settings.sisap_producto_nombre)
+    procedencia = _resolve_procedencia(procedencia_nombre)
+    productos = productos_override or resolve_productos(settings.sisap_producto_codigo, settings.sisap_producto_nombre)
     plan: list[SisapQuery] = []
 
     for producto in productos:
         resolved_dates = resolve_query_dates(
-            output_name="precios_diarios",
-            scope_label="procedencia",
-            scope_value=procedencia["nombre"],
-            producto_nombre=producto["nombre"],
+            control_modulo='precios',
+            output_name='precios_diarios',
+            scope_label='procedencia',
+            scope_value=procedencia['nombre'],
+            producto_codigo=producto['codigo'],
+            producto_nombre=producto['nombre'],
             fecha_inicio=settings.fecha_inicio_resuelta,
             fecha_fin=settings.fecha_fin_resuelta,
         )
@@ -71,7 +83,7 @@ def _build_raw_plan() -> list[SisapQuery]:
                 modulo=ModuloSisap.MAYORISTA_PRECIOS,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
-                procedencia_codigo=procedencia["codigo"],
+                procedencia_codigo=procedencia['codigo'],
                 mercado_codigo=settings.sisap_mercado_codigo,
                 mercado_nombre=settings.sisap_mercado_nombre,
                 productos=[producto],
@@ -107,55 +119,106 @@ def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[
         df, titles = _fetch_price_frames(extractor, query, save_raw=True)
         if not df.is_empty():
             return query, df, titles
-    raise ValueError("No se encontraron resultados con datos en las primeras consultas de muestra.")
+    raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
 
 
 def run_sample() -> Path:
     plan = build_plan()
     if not plan:
-        raise ValueError("No hay queries armadas para precios.")
+        raise ValueError('No hay queries armadas para precios.')
 
     extractor = SisapMayoristaExtractor()
     _, df, _ = _find_first_non_empty_report(extractor, plan)
-    validate_non_empty(df, "precios")
-    validate_expected_columns(df, EXPECTED_COLUMNS, "precios")
-    output = get_settings().clean_dir / "precios_diarios_sample.parquet"
+    validate_non_empty(df, 'precios')
+    validate_expected_columns(df, EXPECTED_COLUMNS, 'precios')
+    output = get_settings().clean_dir / 'precios_diarios_sample.parquet'
     save_parquet(df, output)
     return output
 
 
-def run_full() -> Path:
-    procedencia = _resolve_procedencia()
-    plan = build_plan()
+def run_full(procedencia_nombre: str | None = None) -> Path:
+    settings = get_settings()
+    procedencia = _resolve_procedencia(procedencia_nombre)
+    plan = filter_plan(_build_raw_plan(procedencia['nombre']), settings.sisap_max_queries)
     if not plan:
-        logger.info("No hay queries pendientes para precios.")
-        return build_scope_output_dir("precios_diarios", "procedencia", procedencia["nombre"])
+        logger.info('No hay queries pendientes para precios.')
+        return build_scope_output_dir('precios_diarios', 'procedencia', procedencia['nombre'])
 
-    extractor = SisapMayoristaExtractor()
-    frames: list[pl.DataFrame] = []
     errores: list[dict[str, str]] = []
+    output = build_scope_output_dir('precios_diarios', 'procedencia', procedencia['nombre'])
+    output.mkdir(parents=True, exist_ok=True)
 
-    for idx, query in enumerate(plan, start=1):
-        logger.info("Procesando precios {}/{} producto={} codigo={}", idx, len(plan), query.producto_nombre, query.producto_codigo)
-        try:
-            df, _ = _fetch_price_frames(extractor, query, save_raw=True)
-            if df.is_empty():
-                errores.append({"producto_codigo": query.producto_codigo, "producto_nombre": query.producto_nombre, "motivo": "sin_resultados"})
-                continue
-
-            validate_expected_columns(df, EXPECTED_COLUMNS, f"precios_{query.producto_codigo}")
-            frames.append(df)
-        except Exception as exc:
-            logger.exception("Fallo extrayendo precios para {} ({})", query.producto_nombre, query.producto_codigo)
-            errores.append({"producto_codigo": query.producto_codigo, "producto_nombre": query.producto_nombre, "motivo": str(exc)})
-
-    return finalize_partitioned_output(
-        frames=frames,
-        output_name="precios_diarios",
-        expected_columns=EXPECTED_COLUMNS,
-        sort_columns=["producto_codigo", "variedad", "procedencia", "fecha"],
-        error_rows=errores,
-        scope_label="procedencia",
-        scope_value=procedencia["nombre"],
+    shards = build_grouped_shards(
+        plan,
+        group_key=lambda query: query.producto_codigo,
+        chunk_size=settings.product_batch_size,
+        shard_prefix=f'precios-{procedencia["codigo"]}',
     )
+
+    def process_shard(shard) -> list[dict[str, str]]:
+        extractor = SisapMayoristaExtractor()
+        shard_errors: list[dict[str, str]] = []
+        control_states = init_control_states()
+        for idx, query in enumerate(shard.items, start=1):
+            logger.info(
+                'Procesando precios shard={} {}/{} producto={} codigo={}',
+                shard.shard_id,
+                idx,
+                len(shard.items),
+                query.producto_nombre,
+                query.producto_codigo,
+            )
+            register_control_query(control_states, 'precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query)
+            try:
+                df, _ = _fetch_price_frames(extractor, query, save_raw=True)
+                if df.is_empty():
+                    register_control_success(
+                        control_states,
+                        'precios',
+                        'precios_diarios',
+                        'procedencia',
+                        procedencia['nombre'],
+                        query,
+                        estado='empty',
+                    )
+                    persist_control_event('precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query, 'empty', 'sin_resultados')
+                    persist_control_states(control_states)
+                    shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
+                    continue
+
+                validate_expected_columns(df, EXPECTED_COLUMNS, f'precios_{query.producto_codigo}')
+                append_partitioned_output(
+                    frames=[df],
+                    output_name='precios_diarios',
+                    expected_columns=EXPECTED_COLUMNS,
+                    sort_columns=['producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    scope_label='procedencia',
+                    scope_value=procedencia['nombre'],
+                )
+                register_control_success(control_states, 'precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query)
+                persist_control_event('precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query, 'success')
+                persist_control_states(control_states)
+            except Exception as exc:
+                logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
+                register_control_failure(control_states, 'precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query, str(exc))
+                persist_control_event('precios', 'precios_diarios', 'procedencia', procedencia['nombre'], query, 'error', str(exc))
+                persist_control_states(control_states)
+                shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
+
+        persist_control_states(control_states)
+        return shard_errors
+
+    shard_error_groups = run_shards(
+        shards,
+        process_shard,
+        max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
+        label=f'precios/procedencia={procedencia["nombre"]}',
+    )
+    for shard_errors in shard_error_groups:
+        errores.extend(shard_errors)
+
+    if errores:
+        error_path = output / 'errores.csv'
+        pl.DataFrame(errores).write_csv(error_path)
+    return output
 

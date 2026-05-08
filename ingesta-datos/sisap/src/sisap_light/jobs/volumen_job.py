@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -8,13 +8,20 @@ from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
+    append_partitioned_output,
     build_scope_output_dir,
     filter_plan,
-    finalize_partitioned_output,
+    init_control_states,
+    persist_control_states,
+    persist_control_event,
+    register_control_failure,
+    register_control_query,
+    register_control_success,
     resolve_item,
     resolve_productos,
     resolve_query_dates,
 )
+from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_forms import (
     extract_checkbox_products,
     extract_hidden_inputs,
@@ -31,17 +38,17 @@ from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.volumen import build_volumen_frame
 from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
 
-EXPECTED_COLUMNS = ["fecha", "producto_codigo", "producto_nombre", "variedad", "procedencia", "volumen_ton"]
+EXPECTED_COLUMNS = ['fecha', 'producto_codigo', 'producto_nombre', 'variedad', 'procedencia', 'volumen_ton']
 MAX_SAMPLE_QUERIES = 12
 
 
-def _resolve_procedencia() -> dict:
+def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
     settings = get_settings()
     return resolve_item(
         PROCEDENCIAS_SISAP,
         settings.sisap_procedencia_codigo,
-        settings.sisap_procedencia_nombre,
-        "la procedencia",
+        procedencia_nombre or settings.sisap_procedencia_nombre,
+        'la procedencia',
     )
 
 
@@ -49,28 +56,33 @@ def inspect_home() -> dict:
     extractor = SisapMayoristaExtractor()
     html = extractor.fetch_home()
     return {
-        "hidden_inputs": extract_hidden_inputs(html),
-        "post_id": extract_post_id(html),
-        "mercado_options": extract_market_options(html),
-        "producto_options": extract_checkbox_products(html),
-        "procedencia_options": extract_procedencia_options(html),
-        "variable_options": extract_variable_options(html),
-        "html": html,
+        'hidden_inputs': extract_hidden_inputs(html),
+        'post_id': extract_post_id(html),
+        'mercado_options': extract_market_options(html),
+        'producto_options': extract_checkbox_products(html),
+        'procedencia_options': extract_procedencia_options(html),
+        'variable_options': extract_variable_options(html),
+        'html': html,
     }
 
 
-def _build_raw_plan() -> list[SisapQuery]:
+def _build_raw_plan(
+    procedencia_nombre: str | None = None,
+    productos_override: list[dict] | None = None,
+) -> list[SisapQuery]:
     settings = get_settings()
-    procedencia = _resolve_procedencia()
-    productos = resolve_productos(settings.sisap_producto_codigo, settings.sisap_producto_nombre)
+    procedencia = _resolve_procedencia(procedencia_nombre)
+    productos = productos_override or resolve_productos(settings.sisap_producto_codigo, settings.sisap_producto_nombre)
     plan: list[SisapQuery] = []
 
     for producto in productos:
         resolved_dates = resolve_query_dates(
-            output_name="volumen_diario",
-            scope_label="procedencia",
-            scope_value=procedencia["nombre"],
-            producto_nombre=producto["nombre"],
+            control_modulo='volumen',
+            output_name='volumen_diario',
+            scope_label='procedencia',
+            scope_value=procedencia['nombre'],
+            producto_codigo=producto['codigo'],
+            producto_nombre=producto['nombre'],
             fecha_inicio=settings.fecha_inicio_resuelta,
             fecha_fin=settings.fecha_fin_resuelta,
         )
@@ -83,7 +95,7 @@ def _build_raw_plan() -> list[SisapQuery]:
                 modulo=ModuloSisap.MAYORISTA_VOLUMEN,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
-                procedencia_codigo=procedencia["codigo"],
+                procedencia_codigo=procedencia['codigo'],
                 mercado_codigo=settings.sisap_mercado_codigo,
                 mercado_nombre=settings.sisap_mercado_nombre,
                 productos=[producto],
@@ -100,11 +112,11 @@ def build_plan() -> list[SisapQuery]:
 
 def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[SisapQuery]) -> tuple[SisapQuery, str, list[list[str]]]:
     for query in plan[:MAX_SAMPLE_QUERIES]:
-        report_html = extractor.fetch_report(query, variable="volumen")
+        report_html = extractor.fetch_report(query, variable='volumen')
         rows = detect_primary_table(report_html)
         if rows:
             return query, report_html, rows
-    raise ValueError("No se encontraron resultados con datos en las primeras consultas de muestra.")
+    raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
 
 
 def _normalize_report(query: SisapQuery, report_html: str) -> pl.DataFrame:
@@ -117,69 +129,120 @@ def _normalize_report(query: SisapQuery, report_html: str) -> pl.DataFrame:
 def run_sample() -> Path:
     plan = build_plan()
     if not plan:
-        raise ValueError("No hay queries armadas para volumen.")
+        raise ValueError('No hay queries armadas para volumen.')
 
     extractor = SisapMayoristaExtractor()
     query, report_html, _ = _find_first_non_empty_report(extractor, plan)
     save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
     df = _normalize_report(query, report_html)
-    validate_non_empty(df, "volumen")
-    validate_expected_columns(df, EXPECTED_COLUMNS, "volumen")
-    output = get_settings().clean_dir / "volumen_diario_sample.parquet"
+    validate_non_empty(df, 'volumen')
+    validate_expected_columns(df, EXPECTED_COLUMNS, 'volumen')
+    output = get_settings().clean_dir / 'volumen_diario_sample.parquet'
     save_parquet(df, output)
     return output
 
 
-def run_full() -> Path:
-    procedencia = _resolve_procedencia()
-    plan = build_plan()
+def run_full(procedencia_nombre: str | None = None) -> Path:
+    settings = get_settings()
+    procedencia = _resolve_procedencia(procedencia_nombre)
+    plan = filter_plan(_build_raw_plan(procedencia['nombre']), settings.sisap_max_queries)
     if not plan:
-        logger.info("No hay queries pendientes para volumen.")
-        return build_scope_output_dir("volumen_diario", "procedencia", procedencia["nombre"])
+        logger.info('No hay queries pendientes para volumen.')
+        return build_scope_output_dir('volumen_diario', 'procedencia', procedencia['nombre'])
 
-    extractor = SisapMayoristaExtractor()
-    frames: list[pl.DataFrame] = []
     errores: list[dict[str, str]] = []
+    output = build_scope_output_dir('volumen_diario', 'procedencia', procedencia['nombre'])
+    output.mkdir(parents=True, exist_ok=True)
 
-    for idx, query in enumerate(plan, start=1):
-        logger.info("Procesando volumen {}/{} producto={} codigo={}", idx, len(plan), query.producto_nombre, query.producto_codigo)
-        try:
-            report_html = extractor.fetch_report(query, variable="volumen")
-            df = _normalize_report(query, report_html)
-            save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
-
-            if df.is_empty():
-                errores.append({"producto_codigo": query.producto_codigo, "producto_nombre": query.producto_nombre, "motivo": "sin_resultados"})
-                continue
-
-            validate_expected_columns(df, EXPECTED_COLUMNS, f"volumen_{query.producto_codigo}")
-            frames.append(df)
-        except Exception as exc:
-            logger.exception("Fallo extrayendo volumen para {} ({})", query.producto_nombre, query.producto_codigo)
-            errores.append({"producto_codigo": query.producto_codigo, "producto_nombre": query.producto_nombre, "motivo": str(exc)})
-
-    return finalize_partitioned_output(
-        frames=frames,
-        output_name="volumen_diario",
-        expected_columns=EXPECTED_COLUMNS,
-        sort_columns=["producto_codigo", "variedad", "procedencia", "fecha"],
-        error_rows=errores,
-        scope_label="procedencia",
-        scope_value=procedencia["nombre"],
+    shards = build_grouped_shards(
+        plan,
+        group_key=lambda query: query.producto_codigo,
+        chunk_size=settings.product_batch_size,
+        shard_prefix=f'volumen-{procedencia["codigo"]}',
     )
+
+    def process_shard(shard) -> list[dict[str, str]]:
+        extractor = SisapMayoristaExtractor()
+        shard_errors: list[dict[str, str]] = []
+        control_states = init_control_states()
+        for idx, query in enumerate(shard.items, start=1):
+            logger.info(
+                'Procesando volumen shard={} {}/{} producto={} codigo={}',
+                shard.shard_id,
+                idx,
+                len(shard.items),
+                query.producto_nombre,
+                query.producto_codigo,
+            )
+            register_control_query(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query)
+            try:
+                report_html = extractor.fetch_report(query, variable='volumen')
+                df = _normalize_report(query, report_html)
+                save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
+
+                if df.is_empty():
+                    register_control_success(
+                        control_states,
+                        'volumen',
+                        'volumen_diario',
+                        'procedencia',
+                        procedencia['nombre'],
+                        query,
+                        estado='empty',
+                    )
+                    persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'empty', 'sin_resultados')
+                    persist_control_states(control_states)
+                    shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
+                    continue
+
+                validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
+                append_partitioned_output(
+                    frames=[df],
+                    output_name='volumen_diario',
+                    expected_columns=EXPECTED_COLUMNS,
+                    sort_columns=['producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    scope_label='procedencia',
+                    scope_value=procedencia['nombre'],
+                )
+                register_control_success(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query)
+                persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'success')
+                persist_control_states(control_states)
+            except Exception as exc:
+                logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
+                register_control_failure(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, str(exc))
+                persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'error', str(exc))
+                persist_control_states(control_states)
+                shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
+
+        persist_control_states(control_states)
+        return shard_errors
+
+    shard_error_groups = run_shards(
+        shards,
+        process_shard,
+        max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
+        label=f'volumen/procedencia={procedencia["nombre"]}',
+    )
+    for shard_errors in shard_error_groups:
+        errores.extend(shard_errors)
+
+    if errores:
+        error_path = output / 'errores.csv'
+        pl.DataFrame(errores).write_csv(error_path)
+    return output
 
 
 def inspect_sample_report() -> dict:
     plan = build_plan()
     if not plan:
-        raise ValueError("No hay queries armadas para volumen.")
+        raise ValueError('No hay queries armadas para volumen.')
 
     extractor = SisapMayoristaExtractor()
     query, report_html, rows = _find_first_non_empty_report(extractor, plan)
     return {
-        "query": query.model_dump(),
-        "titles": extract_report_titles(report_html),
-        "rows": rows[:5],
-        "html": report_html,
+        'query': query.model_dump(),
+        'titles': extract_report_titles(report_html),
+        'rows': rows[:5],
+        'html': report_html,
     }
 

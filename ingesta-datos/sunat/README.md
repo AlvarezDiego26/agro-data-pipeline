@@ -1,49 +1,82 @@
-﻿# sunat
+# SUNAT Light Pipeline
 
-Pipeline liviano para archivos SUNAT orientado a exportaciones agrarias frescas.
+Pipeline ligero para archivos SUNAT orientado a exportaciones agrarias frescas, con control de ingesta y operacion automatizable.
 
 ## Objetivo
 - recibir archivos fuente en `data/inbox/sunat`
-- consolidar la base principal de exportaciones desde `zip/dbf`
+- consolidar la base principal de exportaciones desde `zip/dbf` sin perder archivos ya importados
 - filtrar solo registros agrarios frescos utiles
 - homologar productos con IDs compartidos con SISAP
 - conservar productos agrarios nuevos con IDs propios estables
-- calcular precio FOB en USD por kilogramo
-- guardar una sola salida final en `Parquet` y su tabla `Delta`
-- escribir las tablas en `Landing/sunat/` dentro del bucket
+- calcular `precio_fob_usd_por_kg`
+- guardar la salida final en Parquet y Delta
+- dejar el flujo listo para automatizacion posterior
 
-## Flujo final
-1. `inbox`
-   - hoy la alimentacion es manual
-   - se colocan los archivos nuevos en `data/inbox/sunat`
-2. `run-main`
+## Estructura
+- `src/sunat_file/catalogs/`: catalogos de productos y territorio
+- `src/sunat_file/readers/`: lectura de archivos fuente
+- `src/sunat_file/transformers/`: normalizacion y filtrado
+- `src/sunat_file/storage/`: parquet, delta y control
+- `src/sunat_file/jobs/`: importacion, filtrado y orquestacion
+- `src/sunat_file/cli.py`: punto de entrada
+- `scripts/run_sunat_pipeline.ps1`: wrapper para ejecucion automatica
+
+## Flujo operativo
+1. `scan-inbox`
+   - detecta archivos nuevos en `data/inbox/sunat`
+2. `run-import`
    - importa `zip/dbf`
-   - consolida `sunat_exportaciones_base.parquet`
-   - filtra solo exportaciones agrarias frescas
-   - genera la salida final `sunat_exportaciones_agrarias_frescas.parquet`
-   - actualiza `Delta`
+   - consolida `sunat_exportaciones_base.parquet` acumulando nuevos archivos
+   - mueve archivos procesados a `data/processed/sunat`
+   - mueve fallidos a `data/error/sunat`
+3. `run-filter-fresh`
+   - filtra exportaciones agrarias frescas
+   - genera `sunat_exportaciones_agrarias_frescas.parquet`
+   - actualiza Delta por rango procesado
    - genera archivos de revision
+4. `run-main`
+   - ejecuta todo el flujo de extremo a extremo
 
-## Criterio final de la fuente
-- solo se conserva lo que sirve para analisis agricola y estacional
-- se priorizan frutas y hortalizas frescas o enfriadas
-- se excluyen procesados, secos, congelados y derivados industriales
-- si el producto ya existe en SISAP, se respeta su `producto_id`
-- si el producto es nuevo y agrario fresco, recibe un ID estable nuevo
+## Modos de trabajo
+- `backfill`: reproceso historico
+- `incremental`: continua desde la ultima fecha exitosa registrada
+- `manual`: usa exactamente el rango solicitado
+
+## Defaults orientados a automatizacion
+- `SUNAT_MODO_CARGA=incremental`
+- `SUNAT_FECHA_CORTE_INICIO=2016-01-01`
+- `SUNAT_USE_CONTROL_TABLE=true`
+
+## Control de ingesta
+SUNAT ahora mantiene dos niveles de control:
+
+- `control/ingesta_control`: snapshot resumido por dataset y modulo
+- `control/ingesta_control_eventos`: journal de eventos por importacion y filtrado
+
+Esto permite registrar:
+- archivos importados con exito
+- archivos omitidos
+- archivos con error
+- la ultima fecha exitosa del dataset filtrado
+- corridas de filtrado exitosas
+- corridas vacias
+- corridas fallidas
+
+## Tolerancia a fallas
+Si MinIO o la red fallan, el control se conserva localmente en:
+
+- `data/control/control_state.parquet`
+- `data/control/control_pending.parquet`
+- `data/control/control_events_local.parquet`
+- `data/control/control_events_pending.parquet`
+
+En la siguiente ejecucion se intenta sincronizar automaticamente lo pendiente.
 
 ## Salidas principales
-- base fuente consolidada:
-  - `data/clean/sunat_exportaciones_base.parquet`
-- salida final limpia:
-  - `data/clean/sunat_exportaciones_agrarias_frescas.parquet`
-- raw final:
-  - `data/raw/sunat_exportaciones_agrarias_frescas_raw.parquet`
-- delta final:
-  - `data/clean_delta/sunat_exportaciones_agrarias_frescas`
-
-## Estructura esperada en bucket
-- `<BUCKET_NAME>/Landing/sunat/sunat_exportaciones_base`
-- `<BUCKET_NAME>/Landing/sunat/sunat_exportaciones_agrarias_frescas`
+- `data/clean/sunat_exportaciones_base.parquet`
+- `data/clean/sunat_exportaciones_agrarias_frescas.parquet`
+- `data/raw/sunat_exportaciones_agrarias_frescas_raw.parquet`
+- `data/clean_delta/sunat_exportaciones_agrarias_frescas`
 
 ## Archivos de revision
 - `data/review/sunat_exportaciones_frescas_preview.csv`
@@ -55,7 +88,7 @@ Pipeline liviano para archivos SUNAT orientado a exportaciones agrarias frescas.
 - `data/review/sunat_catalogo_territorial_base.csv`
 - `data/review/sunat_exportaciones_frescas_diccionario.csv`
 
-## Comandos
+## Comando principal
 Desde `ingesta-datos/sunat`:
 
 ```powershell
@@ -63,19 +96,21 @@ $env:PYTHONPATH = '.\src'
 python -m sunat_file.cli run-main
 ```
 
-Comandos auxiliares:
-
-```powershell
-python -m sunat_file.cli scan-inbox
-python -m sunat_file.cli run-import
-python -m sunat_file.cli run-filter-fresh
-```
-
-## Wrapper para automatizacion
+## Wrapper principal
 - `scripts/run_sunat_pipeline.ps1`
 
-Ese wrapper ya deja listo el proyecto para scheduler porque solo necesita ejecutar un comando.
+Ejemplo:
 
-## Nota sobre precios
-La columna final util es `precio_fob_usd_por_kg`.
-No se convierte a soles dentro del pipeline porque eso requeriria una fuente externa de tipo de cambio y no conviene inventar conversiones dentro de esta etapa.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_sunat_pipeline.ps1 -ModoCarga incremental -FechaInicio 2016-01-01
+```
+
+## Nota de arquitectura
+SUNAT ya sigue la misma logica general que SISAP:
+
+- `catalogs/readers/transformers/storage/jobs`
+- control resumido
+- journal de eventos
+- fallback local para errores de sincronizacion
+- CLI y wrapper para automatizacion
+- fechas y modo de carga listos para ser enviados como parametros desde Prefect

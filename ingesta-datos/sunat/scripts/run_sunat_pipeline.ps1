@@ -1,4 +1,7 @@
-﻿param(
+param(
+    [string]$FechaInicio,
+    [string]$FechaFin,
+    [string]$ModoCarga,
     [string]$StorageBackend,
     [string]$DeltaEnabled,
     [string]$MinioEndpoint,
@@ -11,7 +14,7 @@
 )
 
 function Set-OptionalEnv {
-    param([string]$Name,[string]$Value)
+    param([string]$Name, [string]$Value)
     if ($null -ne $Value -and $Value -ne '') {
         [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     }
@@ -24,6 +27,9 @@ if (-not $ProjectRoot) {
 $env:PYTHONPATH = Join-Path $ProjectRoot 'src'
 Set-Location $ProjectRoot
 
+Set-OptionalEnv 'SUNAT_FECHA_CORTE_INICIO' $FechaInicio
+Set-OptionalEnv 'SUNAT_FECHA_CORTE_FIN' $FechaFin
+Set-OptionalEnv 'SUNAT_MODO_CARGA' $ModoCarga
 Set-OptionalEnv 'SUNAT_STORAGE_BACKEND' $StorageBackend
 Set-OptionalEnv 'SUNAT_DELTA_ENABLED' $DeltaEnabled
 Set-OptionalEnv 'MINIO_ENDPOINT' $MinioEndpoint
@@ -35,4 +41,6 @@ Set-OptionalEnv 'MINIO_PREFIX' $MinioPrefix
 
 Write-Host 'Ejecutando SUNAT pipeline fresco'
 python -m sunat_file.cli run-main
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

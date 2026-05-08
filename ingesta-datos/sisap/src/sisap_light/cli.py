@@ -1,5 +1,6 @@
-﻿import typer
+import typer
 
+from sisap_light.config import get_settings
 from sisap_light.jobs.ciudades_job import (
     build_plan_mayoristas,
     build_plan_minoristas,
@@ -22,17 +23,140 @@ from sisap_light.schemas import ModuloSisap
 app = typer.Typer(help='CLI del proyecto SISAP liviano.')
 
 
-@app.command('run-main')
-def run_main_command() -> None:
-    result = run_pipeline_main()
+def _apply_runtime_overrides(
+    fecha_inicio: str | None,
+    fecha_fin: str | None,
+    modo_carga: str | None,
+    modulos: str | None,
+    procedencias: str | None,
+    regiones: str | None,
+    producto_codigo: str | None,
+    producto_nombre: str | None,
+    max_queries: int | None,
+    scope_workers: int | None,
+    shard_workers: int | None,
+    product_batch_size: int | None,
+) -> None:
+    settings = get_settings()
+    if fecha_inicio is not None:
+        settings.sisap_fecha_inicio = fecha_inicio
+    if fecha_fin is not None:
+        settings.sisap_fecha_fin = fecha_fin
+    if modo_carga is not None:
+        settings.sisap_modo_carga = modo_carga
+    if modulos is not None:
+        settings.sisap_modulos = modulos
+    if procedencias is not None:
+        settings.sisap_procedencias = procedencias
+    if regiones is not None:
+        settings.sisap_regiones = regiones
+    if producto_codigo is not None:
+        settings.sisap_producto_codigo = producto_codigo
+    if producto_nombre is not None:
+        settings.sisap_producto_nombre = producto_nombre
+    if max_queries is not None:
+        settings.sisap_max_queries = max_queries
+    if scope_workers is not None:
+        settings.sisap_scope_max_workers = scope_workers
+    if shard_workers is not None:
+        settings.sisap_shard_max_workers = shard_workers
+    if product_batch_size is not None:
+        settings.sisap_product_batch_size = product_batch_size
+
+
+def _run_command_with_overrides(
+    runner,
+    fecha_inicio: str | None,
+    fecha_fin: str | None,
+    modo_carga: str | None,
+    max_queries: int | None,
+    scope_workers: int | None,
+    shard_workers: int | None,
+    product_batch_size: int | None,
+):
+    _apply_runtime_overrides(
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        modulos=None,
+        procedencias=None,
+        regiones=None,
+        producto_codigo=None,
+        producto_nombre=None,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
+    return runner()
+
+
+def _echo_scope_summary(label: str, values: list[str]) -> None:
+    if values:
+        typer.echo(f'{label}: {", ".join(values)}')
+
+
+def _echo_pipeline_summary(result: dict[str, object]) -> None:
     typer.echo(f"Modulos: {', '.join(result['modulos'])}")
-    if result['procedencias']:
-        typer.echo(f"Procedencias: {', '.join(result['procedencias'])}")
-    if result['regiones']:
-        typer.echo(f"Regiones: {', '.join(result['regiones'])}")
+    _echo_scope_summary('Procedencias', result['procedencias'])
+    _echo_scope_summary('Regiones', result['regiones'])
     typer.echo(f"Bloques ejecutados: {len(result['resultados'])}")
     for item in result['resultados']:
         typer.echo(f'- {item}')
+    typer.echo(
+        'Control pendiente por sincronizar: '
+        f"{result['control_status']['pending_records']}"
+    )
+    typer.echo(
+        'Eventos de control pendientes por sincronizar: '
+        f"{result['control_status']['pending_event_records']}"
+    )
+    typer.echo(f"Scope workers: {result['scope_workers']}")
+    typer.echo(f"Shard workers: {result['shard_workers']}")
+    typer.echo(f"Lote productos por shard: {result['product_batch_size']}")
+    if result['control_status']['pending_records']:
+        typer.echo(
+            'Cache local de control: '
+            f"{result['control_status']['pending_path']}"
+        )
+    if result['control_status']['pending_event_records']:
+        typer.echo(
+            'Cache local de eventos de control: '
+            f"{result['control_status']['pending_events_path']}"
+        )
+
+
+@app.command('run-main')
+def run_main_command(
+    fecha_inicio: str | None = typer.Option(None, '--fecha-inicio'),
+    fecha_fin: str | None = typer.Option(None, '--fecha-fin'),
+    modo_carga: str | None = typer.Option(None, '--modo-carga'),
+    modulos: str | None = typer.Option(None, '--modulos'),
+    procedencias: str | None = typer.Option(None, '--procedencias'),
+    regiones: str | None = typer.Option(None, '--regiones'),
+    producto_codigo: str | None = typer.Option(None, '--producto-codigo'),
+    producto_nombre: str | None = typer.Option(None, '--producto-nombre'),
+    max_queries: int | None = typer.Option(None, '--max-queries'),
+    scope_workers: int | None = typer.Option(None, '--scope-workers'),
+    shard_workers: int | None = typer.Option(None, '--shard-workers'),
+    product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
+) -> None:
+    _apply_runtime_overrides(
+        fecha_inicio,
+        fecha_fin,
+        modo_carga,
+        modulos,
+        procedencias,
+        regiones,
+        producto_codigo,
+        producto_nombre,
+        max_queries,
+        scope_workers,
+        shard_workers,
+        product_batch_size,
+    )
+    result = run_pipeline_main()
+    _echo_pipeline_summary(result)
 
 
 @app.command('inspect-home')
@@ -65,9 +189,26 @@ def plan_volumen() -> None:
 
 
 @app.command('run-volumen')
-def run_volumen() -> None:
-    output = run_volumen_full()
-    typer.echo(f"Volumen consolidado guardado en: {output}")
+def run_volumen(
+    fecha_inicio: str | None = typer.Option(None, '--fecha-inicio'),
+    fecha_fin: str | None = typer.Option(None, '--fecha-fin'),
+    modo_carga: str | None = typer.Option(None, '--modo-carga'),
+    max_queries: int | None = typer.Option(None, '--max-queries'),
+    scope_workers: int | None = typer.Option(None, '--scope-workers'),
+    shard_workers: int | None = typer.Option(None, '--shard-workers'),
+    product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
+) -> None:
+    output = _run_command_with_overrides(
+        run_volumen_full,
+        fecha_inicio,
+        fecha_fin,
+        modo_carga,
+        max_queries,
+        scope_workers,
+        shard_workers,
+        product_batch_size,
+    )
+    typer.echo(f'Volumen consolidado guardado en: {output}')
 
 
 @app.command('plan-precios')
@@ -79,9 +220,26 @@ def plan_precios() -> None:
 
 
 @app.command('run-precios')
-def run_precios() -> None:
-    output = run_precios_full()
-    typer.echo(f"Precios consolidados guardados en: {output}")
+def run_precios(
+    fecha_inicio: str | None = typer.Option(None, '--fecha-inicio'),
+    fecha_fin: str | None = typer.Option(None, '--fecha-fin'),
+    modo_carga: str | None = typer.Option(None, '--modo-carga'),
+    max_queries: int | None = typer.Option(None, '--max-queries'),
+    scope_workers: int | None = typer.Option(None, '--scope-workers'),
+    shard_workers: int | None = typer.Option(None, '--shard-workers'),
+    product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
+) -> None:
+    output = _run_command_with_overrides(
+        run_precios_full,
+        fecha_inicio,
+        fecha_fin,
+        modo_carga,
+        max_queries,
+        scope_workers,
+        shard_workers,
+        product_batch_size,
+    )
+    typer.echo(f'Precios consolidados guardados en: {output}')
 
 
 @app.command('plan-ciudades-mayoristas')
@@ -101,39 +259,73 @@ def plan_ciudades_minoristas() -> None:
 
 
 @app.command('run-ciudades-mayoristas')
-def run_ciudades_mayoristas() -> None:
-    output = run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS)
-    typer.echo(f"Ciudades mayoristas consolidadas guardadas en: {output}")
+def run_ciudades_mayoristas(
+    fecha_inicio: str | None = typer.Option(None, '--fecha-inicio'),
+    fecha_fin: str | None = typer.Option(None, '--fecha-fin'),
+    modo_carga: str | None = typer.Option(None, '--modo-carga'),
+    max_queries: int | None = typer.Option(None, '--max-queries'),
+    scope_workers: int | None = typer.Option(None, '--scope-workers'),
+    shard_workers: int | None = typer.Option(None, '--shard-workers'),
+    product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
+) -> None:
+    output = _run_command_with_overrides(
+        lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS),
+        fecha_inicio,
+        fecha_fin,
+        modo_carga,
+        max_queries,
+        scope_workers,
+        shard_workers,
+        product_batch_size,
+    )
+    typer.echo(f'Ciudades mayoristas consolidadas guardadas en: {output}')
 
 
 @app.command('run-ciudades-minoristas')
-def run_ciudades_minoristas() -> None:
-    output = run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS)
-    typer.echo(f"Ciudades minoristas consolidadas guardadas en: {output}")
+def run_ciudades_minoristas(
+    fecha_inicio: str | None = typer.Option(None, '--fecha-inicio'),
+    fecha_fin: str | None = typer.Option(None, '--fecha-fin'),
+    modo_carga: str | None = typer.Option(None, '--modo-carga'),
+    max_queries: int | None = typer.Option(None, '--max-queries'),
+    scope_workers: int | None = typer.Option(None, '--scope-workers'),
+    shard_workers: int | None = typer.Option(None, '--shard-workers'),
+    product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
+) -> None:
+    output = _run_command_with_overrides(
+        lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS),
+        fecha_inicio,
+        fecha_fin,
+        modo_carga,
+        max_queries,
+        scope_workers,
+        shard_workers,
+        product_batch_size,
+    )
+    typer.echo(f'Ciudades minoristas consolidadas guardadas en: {output}')
 
 
 @app.command('sample-volumen')
 def sample_volumen() -> None:
     output = run_volumen_sample()
-    typer.echo(f"Sample volumen guardado en: {output}")
+    typer.echo(f'Sample volumen guardado en: {output}')
 
 
 @app.command('sample-precios')
 def sample_precios() -> None:
     output = run_precios_sample()
-    typer.echo(f"Sample precios guardado en: {output}")
+    typer.echo(f'Sample precios guardado en: {output}')
 
 
 @app.command('sample-ciudades-mayoristas')
 def sample_ciudades_mayoristas() -> None:
     output = run_ciudades_sample(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS)
-    typer.echo(f"Sample ciudades mayoristas guardado en: {output}")
+    typer.echo(f'Sample ciudades mayoristas guardado en: {output}')
 
 
 @app.command('sample-ciudades-minoristas')
 def sample_ciudades_minoristas() -> None:
     output = run_ciudades_sample(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS)
-    typer.echo(f"Sample ciudades minoristas guardado en: {output}")
+    typer.echo(f'Sample ciudades minoristas guardado en: {output}')
 
 
 if __name__ == '__main__':

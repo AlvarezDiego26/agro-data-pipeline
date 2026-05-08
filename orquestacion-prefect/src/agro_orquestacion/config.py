@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    app_env: str = "local"
+    prefect_work_pool_name: str = "agro-managed-pool"
+    prefect_sisap_interval_hours: int = 4
+    prefect_sunat_interval_hours: int = 6
+    prefect_sisap_master_interval_hours: int = 4
+    prefect_enable_sisap: bool = True
+    prefect_enable_sunat: bool = True
+    prefect_sisap_timeout_minutes: int = 240
+    prefect_sunat_timeout_minutes: int = 180
+
+    storage_backend: str = "minio"
+    delta_enabled: bool = True
+    minio_endpoint: str = "http://38.210.246.165:30090"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "agro-productos"
+    minio_region: str = "us-east-1"
+
+    sisap_minio_prefix: str = "Landing/sisap"
+    sunat_minio_prefix: str = "Landing/sunat"
+
+    sisap_fecha_inicio: str = "2016-01-01"
+    sisap_fecha_fin: str = ""
+    sisap_modo_carga: str = "incremental"
+    sisap_modulos: str = "volumen,precios,ciudades-mayoristas,ciudades-minoristas"
+    sisap_procedencias: str = "all"
+    sisap_regiones: str = "all"
+    sisap_productos: str = "all"
+    sisap_estrategia_instanciacion: str = "por_scope"
+    sisap_max_instancias_paralelas: int = 8
+    sisap_max_queries: int | None = None
+    sisap_scope_max_workers: int = 2
+    sisap_shard_max_workers: int = 4
+    sisap_product_batch_size: int = 1
+
+    sunat_fecha_corte_inicio: str = "2016-01-01"
+    sunat_fecha_corte_fin: str = ""
+    sunat_modo_carga: str = "incremental"
+
+    @property
+    def repo_root(self) -> Path:
+        return Path(__file__).resolve().parents[3]
+
+    @property
+    def sisap_root(self) -> Path:
+        return self.repo_root / "ingesta-datos" / "sisap"
+
+    @property
+    def sunat_root(self) -> Path:
+        return self.repo_root / "ingesta-datos" / "sunat"
+
+    @property
+    def prefect_requirements(self) -> list[str]:
+        return [
+            "prefect>=3,<4",
+            "httpx==0.28.1",
+            "selectolax==0.3.26",
+            "lxml==5.4.0",
+            "polars==1.30.0",
+            "pyarrow==20.0.0",
+            "deltalake==0.18.2",
+            "dbfread==2.0.7",
+            "openpyxl==3.1.5",
+            "fastexcel==0.13.0",
+            "pydantic==2.11.4",
+            "pydantic-settings==2.9.1",
+            "python-dotenv==1.1.0",
+            "typer==0.15.4",
+            "tenacity==9.1.2",
+            "loguru==0.7.3",
+        ]
+
+    def sisap_env(self) -> dict[str, str]:
+        env: dict[str, str] = {
+            "PYTHONPATH": "src",
+            "STORAGE_BACKEND": self.storage_backend,
+            "DELTA_ENABLED": str(self.delta_enabled).lower(),
+            "MINIO_ENDPOINT": self.minio_endpoint,
+            "MINIO_ACCESS_KEY": self.minio_access_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
+            "MINIO_BUCKET": self.minio_bucket,
+            "MINIO_REGION": self.minio_region,
+            "MINIO_PREFIX": self.sisap_minio_prefix,
+            "SISAP_FECHA_INICIO": self.sisap_fecha_inicio,
+            "SISAP_FECHA_FIN": self.sisap_fecha_fin,
+            "SISAP_MODO_CARGA": self.sisap_modo_carga,
+            "SISAP_MODULOS": self.sisap_modulos,
+            "SISAP_PROCEDENCIAS": self.sisap_procedencias,
+            "SISAP_REGIONES": self.sisap_regiones,
+            "SISAP_SCOPE_MAX_WORKERS": str(self.sisap_scope_max_workers),
+            "SISAP_SHARD_MAX_WORKERS": str(self.sisap_shard_max_workers),
+            "SISAP_PRODUCT_BATCH_SIZE": str(self.sisap_product_batch_size),
+        }
+        if self.sisap_max_queries is not None:
+            env["SISAP_MAX_QUERIES"] = str(self.sisap_max_queries)
+        return env
+
+    def sunat_env(self) -> dict[str, str]:
+        return {
+            "PYTHONPATH": "src",
+            "SUNAT_STORAGE_BACKEND": self.storage_backend,
+            "SUNAT_DELTA_ENABLED": str(self.delta_enabled).lower(),
+            "MINIO_ENDPOINT": self.minio_endpoint,
+            "MINIO_ACCESS_KEY": self.minio_access_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
+            "MINIO_BUCKET": self.minio_bucket,
+            "MINIO_REGION": self.minio_region,
+            "MINIO_PREFIX": self.sunat_minio_prefix,
+            "SUNAT_FECHA_CORTE_INICIO": self.sunat_fecha_corte_inicio,
+            "SUNAT_FECHA_CORTE_FIN": self.sunat_fecha_corte_fin,
+            "SUNAT_MODO_CARGA": self.sunat_modo_carga,
+        }
+
+
+def get_settings() -> Settings:
+    return Settings()

@@ -1,9 +1,11 @@
-﻿from datetime import date
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 
 
 class Settings(BaseSettings):
@@ -24,10 +26,13 @@ class Settings(BaseSettings):
     sisap_timeout_seconds: int = 30
     sisap_retry_intentos: int = 3
     sisap_retry_espera_segundos: int = 3
-    sisap_fecha_inicio: str = '2023-01-01'
+    sisap_fecha_inicio: str = '2016-01-01'
     sisap_fecha_fin: str = ''
-    sisap_modo_carga: str = 'backfill'
+    sisap_modo_carga: str = 'incremental'
     sisap_incremental_overlap_dias: int = 0
+    sisap_use_control_table: bool = True
+    sisap_control_dataset: str = 'control/ingesta_control'
+    sisap_control_events_dataset: str = 'control/ingesta_control_eventos'
     sisap_procedencia_codigo: str | None = None
     sisap_procedencia_nombre: str | None = None
     sisap_region_codigo: str | None = None
@@ -38,9 +43,13 @@ class Settings(BaseSettings):
     sisap_producto_nombre: str | None = None
     sisap_max_queries: int | None = None
     sisap_modulos: str = 'volumen,precios,ciudades-mayoristas,ciudades-minoristas'
-    sisap_procedencias: str = 'Arequipa'
-    sisap_regiones: str = 'Arequipa'
+    sisap_procedencias: str = 'all'
+    sisap_regiones: str = 'all'
     sisap_pause_seconds: int = 30
+    sisap_parallel_enabled: bool = True
+    sisap_scope_max_workers: int = 2
+    sisap_shard_max_workers: int = 4
+    sisap_product_batch_size: int = 1
 
     storage_backend: str = 'local'
     delta_enabled: bool = True
@@ -76,6 +85,26 @@ class Settings(BaseSettings):
     @property
     def raw_html_dir(self) -> Path:
         return self.raw_dir / 'html'
+
+    @property
+    def control_dir(self) -> Path:
+        return self.data_dir / 'control'
+
+    @property
+    def control_local_state_path(self) -> Path:
+        return self.control_dir / 'control_state.parquet'
+
+    @property
+    def control_pending_state_path(self) -> Path:
+        return self.control_dir / 'control_pending.parquet'
+
+    @property
+    def control_local_events_path(self) -> Path:
+        return self.control_dir / 'control_events_local.parquet'
+
+    @property
+    def control_pending_events_path(self) -> Path:
+        return self.control_dir / 'control_events_pending.parquet'
 
     @property
     def is_minio(self) -> bool:
@@ -115,6 +144,19 @@ class Settings(BaseSettings):
             return []
         return [item.strip() for item in raw_value.split(',') if item.strip()]
 
+    @staticmethod
+    def _all_scopes() -> list[str]:
+        return [
+            item['nombre']
+            for item in PROCEDENCIAS_SISAP
+            if item['nombre'].strip().lower() != 'desconocida'
+        ]
+
+    @staticmethod
+    def _is_all_keyword(values: list[str]) -> bool:
+        normalized = {value.strip().lower() for value in values}
+        return bool(normalized) and normalized <= {'all', '*', 'todas', 'todos'}
+
     @property
     def fecha_inicio_resuelta(self) -> date:
         return self._resolve_date(self.sisap_fecha_inicio, date.today())
@@ -128,16 +170,42 @@ class Settings(BaseSettings):
         return self.sisap_modo_carga.strip().lower() == 'incremental'
 
     @property
+    def is_manual(self) -> bool:
+        return self.sisap_modo_carga.strip().lower() == 'manual'
+
+    @property
     def modulos_resueltos(self) -> list[str]:
         return self._split_csv(self.sisap_modulos)
 
     @property
     def procedencias_resueltas(self) -> list[str]:
-        return self._split_csv(self.sisap_procedencias)
+        values = self._split_csv(self.sisap_procedencias)
+        if not values or self._is_all_keyword(values):
+            return self._all_scopes()
+        return values
 
     @property
     def regiones_resueltas(self) -> list[str]:
-        return self._split_csv(self.sisap_regiones)
+        values = self._split_csv(self.sisap_regiones)
+        if not values or self._is_all_keyword(values):
+            return self._all_scopes()
+        return values
+
+    @property
+    def parallel_enabled(self) -> bool:
+        return self.sisap_parallel_enabled
+
+    @property
+    def scope_max_workers(self) -> int:
+        return max(int(self.sisap_scope_max_workers or 1), 1)
+
+    @property
+    def shard_max_workers(self) -> int:
+        return max(int(self.sisap_shard_max_workers or 1), 1)
+
+    @property
+    def product_batch_size(self) -> int:
+        return max(int(self.sisap_product_batch_size or 1), 1)
 
 
 @lru_cache(maxsize=1)
@@ -146,6 +214,7 @@ def get_settings() -> Settings:
     settings.raw_dir.mkdir(parents=True, exist_ok=True)
     settings.clean_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_html_dir.mkdir(parents=True, exist_ok=True)
+    settings.control_dir.mkdir(parents=True, exist_ok=True)
     if not settings.is_minio:
         settings.clean_delta_dir.mkdir(parents=True, exist_ok=True)
     return settings
