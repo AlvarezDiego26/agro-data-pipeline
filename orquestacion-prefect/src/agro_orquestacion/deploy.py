@@ -95,6 +95,7 @@ def _deploy_managed(settings) -> None:
             "env": runtime_env,
         },
         tags=["sisap", "managed", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
     sisap_master_flow.from_source(
@@ -123,6 +124,7 @@ def _deploy_managed(settings) -> None:
             "env": runtime_env,
         },
         tags=["sisap", "managed", "master", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
     sunat_main_flow.from_source(
@@ -145,6 +147,7 @@ def _deploy_managed(settings) -> None:
             ),
         },
         tags=["sunat", "managed", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
     agro_ingesta_flow.from_source(
@@ -158,6 +161,7 @@ def _deploy_managed(settings) -> None:
             "env": runtime_env,
         },
         tags=["agro", "managed", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
 
