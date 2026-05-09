@@ -17,6 +17,16 @@ def _runtime_env(base_env: dict[str, str], *, pythonpath: str) -> dict[str, str]
     return env
 
 
+def _managed_pythonpath() -> str:
+    return ":".join(
+        [
+            "orquestacion-prefect/src",
+            "ingesta-datos/sisap/src",
+            "ingesta-datos/sunat/src",
+        ]
+    )
+
+
 def _build_source(settings) -> GitRepository:
     if settings.prefect_github_access_token:
         Secret(value=settings.prefect_github_access_token).save(
@@ -37,6 +47,10 @@ def _build_source(settings) -> GitRepository:
 
 
 def _validate_runtime(settings) -> None:
+    if settings.prefect_repo_url == "https://github.com/tu-organizacion/tu-repo.git":
+        raise ValueError(
+            "Configura PREFECT_REPO_URL con el repositorio real antes de publicar deployments managed."
+        )
     if settings.storage_backend.lower() == "minio":
         missing = []
         if not settings.minio_access_key:
@@ -54,7 +68,7 @@ def _deploy_managed(settings) -> None:
     source = _build_source(settings)
     runtime_env = _runtime_env(
         settings.sisap_env(),
-        pythonpath="orquestacion-prefect/src",
+        pythonpath=_managed_pythonpath(),
     )
 
     sisap_main_flow.from_source(
@@ -127,7 +141,7 @@ def _deploy_managed(settings) -> None:
             "pip_packages": settings.prefect_requirements,
             "env": _runtime_env(
                 settings.sunat_env(),
-                pythonpath="orquestacion-prefect/src",
+                pythonpath=_managed_pythonpath(),
             ),
         },
         tags=["sunat", "managed", "ingesta"],

@@ -81,9 +81,21 @@ class Settings(BaseSettings):
     def prefect_requirements(self) -> list[str]:
         return [
             "prefect>=3,<4",
+            "httpx==0.28.1",
+            "selectolax==0.3.26",
+            "lxml==5.4.0",
+            "polars==1.30.0",
+            "pyarrow==20.0.0",
+            "deltalake==0.18.2",
+            "dbfread==2.0.7",
+            "openpyxl==3.1.5",
+            "fastexcel==0.13.0",
             "pydantic==2.11.4",
             "pydantic-settings==2.9.1",
             "python-dotenv==1.1.0",
+            "typer==0.15.4",
+            "tenacity==9.1.2",
+            "loguru==0.7.3",
         ]
 
     @property
