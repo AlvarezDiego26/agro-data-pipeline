@@ -1,4 +1,4 @@
-﻿from datetime import date
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -28,7 +28,7 @@ from sisap_light.schemas import ModuloSisap, SisapQuery
 from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.ciudades import build_ciudades_metric_frame, merge_ciudades_metrics
-from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
+from sisap_light.procesamiento.limpieza import validate_expected_columns, validate_non_empty
 
 CITY_VARIABLES = {
     ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS: ['may_precio_min', 'may_precio_prom', 'may_precio_max'],

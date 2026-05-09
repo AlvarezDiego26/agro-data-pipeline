@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import date, timedelta
 import unicodedata
@@ -19,8 +19,8 @@ from sisap_light.procesamiento.storage.control import (
 from sisap_light.procesamiento.storage.delta import save_delta_table
 from sisap_light.procesamiento.storage.merge import deduplicate_dataset
 from sisap_light.procesamiento.storage.parquet import save_partitioned_parquet
-from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
-
+from sisap_light.procesamiento.limpieza import normalize_dataset, validate_expected_columns, validate_non_empty
+from sisap_light.procesamiento.storage.merge import business_key_columns
 
 _CONTROL_LAST_SUCCESS_CACHE: dict[tuple[str, str, str, str, str, str], object | None] = {}
 _CONTROL_READ_DISABLED = False
@@ -119,13 +119,11 @@ def build_scope_output_dir(output_name: str, scope_label: str, scope_value: str)
 def _get_last_delta_date(dataset_name: str) -> date | None:
     settings = get_settings()
     try:
-        from deltalake import DeltaTable
-
-        table = DeltaTable(settings.build_delta_uri(dataset_name), storage_options=settings.delta_storage_options)
-        fecha_df = pl.from_arrow(table.to_pyarrow_table(columns=['fecha'])).drop_nulls()
+        uri = settings.build_delta_uri(dataset_name)
+        fecha_df = pl.scan_delta(uri, storage_options=settings.delta_storage_options).select(pl.col('fecha').max()).collect()
         if fecha_df.is_empty():
             return None
-        return fecha_df.get_column('fecha').max()
+        return fecha_df.item()
     except Exception:
         return None
 
@@ -322,7 +320,7 @@ def persist_control_states(states: dict[tuple[str, str], dict]) -> str:
             and ultima_fecha_exitosa >= state['fecha_fin_solicitada']
         ):
             estado = 'empty'
-        elif ultima_fecha_exitosa is not None and ultima_fecha_exitosa >= state['fecha_fin_solicitada']:
+        elif ultima_fecha_exitosa is not None and state['estado'] != 'empty' and ultima_fecha_exitosa >= state['fecha_fin_solicitada']:
             estado = 'success'
         elif ultima_fecha_exitosa is not None:
             estado = 'partial'
@@ -450,14 +448,21 @@ def append_partitioned_output(
         raise ValueError(f'La corrida parcial de {output_name} no produjo data util.')
 
     final_df = pl.concat(frames, how='vertical_relaxed')
-    final_df = deduplicate_dataset(final_df, output_name).sort(sort_columns)
+    
+    # 1. Normalizar los nulos (sin tocar las llaves de negocio)
+    keys = business_key_columns(output_name, final_df.columns)
+    final_df = normalize_dataset(final_df, keys)
+
+    # 2. Validaciones basicas de calidad
+    validate_non_empty(final_df, output_name)
+    validate_expected_columns(final_df, expected_columns, output_name)
+
+    # 3. Formateo y orden local antes del Storage (el Storage hara la deduplicacion)
+    final_df = final_df.sort(sort_columns)
     final_df = final_df.with_columns(
         pl.col('fecha').dt.year().cast(pl.Int32).alias('anio'),
         pl.col('fecha').dt.strftime('%m').alias('mes'),
     )
-
-    validate_non_empty(final_df, output_name)
-    validate_expected_columns(final_df, expected_columns, output_name)
 
     settings = get_settings()
     scope_folder = build_scope_folder(scope_label, scope_value)

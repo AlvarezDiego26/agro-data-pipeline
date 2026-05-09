@@ -1,4 +1,4 @@
-﻿from datetime import date
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -37,7 +37,7 @@ from sisap_light.schemas import ModuloSisap, SisapQuery
 from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.volumen import build_volumen_frame
-from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
+from sisap_light.procesamiento.limpieza import validate_expected_columns, validate_non_empty
 
 EXPECTED_COLUMNS = ['fecha', 'producto_codigo', 'producto_nombre', 'variedad', 'procedencia', 'volumen_ton']
 MAX_SAMPLE_QUERIES = 12

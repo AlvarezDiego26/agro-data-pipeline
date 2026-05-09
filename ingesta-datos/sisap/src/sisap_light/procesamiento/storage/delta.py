@@ -6,7 +6,11 @@ from threading import RLock
 import polars as pl
 
 from sisap_light.config import get_settings
-from sisap_light.procesamiento.storage.merge import business_key_columns, deduplicate_dataset
+from sisap_light.procesamiento.storage.merge import (
+    business_key_columns,
+    deduplicate_dataset,
+    normalize_dataset,
+)
 
 DELTA_RUNTIME_LOCK = RLock()
 _DELTA_RUNTIME: tuple[object, object] | None = None
@@ -80,9 +84,9 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
     DeltaTable, write_deltalake = get_delta_runtime()
 
     with DELTA_RUNTIME_LOCK:
-        source_df = deduplicate_dataset(df, dataset_name)
+        source_df = normalize_dataset(df, dataset_name)
+        source_df = deduplicate_dataset(source_df, dataset_name)
         merge_predicate = _merge_predicate(dataset_name, source_df.columns)
-        existing_table = None
 
         try:
             existing_table = DeltaTable(table_uri, storage_options=storage_options)
@@ -90,29 +94,25 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
             existing_table = None
 
         if existing_table is not None:
-            if merge_predicate:
-                try:
-                    change_predicate = _change_predicate(dataset_name, source_df.columns)
-                    (
-                        existing_table.merge(
-                            source=source_df.to_arrow(),
-                            predicate=merge_predicate,
-                            source_alias="source",
-                            target_alias="target",
-                        )
-                        .when_matched_update_all(predicate=change_predicate)
-                        .when_not_matched_insert_all()
-                        .execute()
-                    )
-                    return table_uri
-                except Exception:
-                    pass
+            if not merge_predicate:
+                raise ValueError(
+                    f"No se puede hacer merge incremental en '{dataset_name}': "
+                    "no se encontraron llaves de negocio validas."
+                )
 
-            existing_df = pl.from_arrow(existing_table.to_pyarrow_table())
-            source_df = deduplicate_dataset(
-                pl.concat([existing_df, source_df], how="vertical_relaxed"),
-                dataset_name,
+            change_predicate = _change_predicate(dataset_name, source_df.columns)
+            merge_builder = existing_table.merge(
+                source=source_df.to_arrow(),
+                predicate=merge_predicate,
+                source_alias="source",
+                target_alias="target",
             )
+            if change_predicate:
+                merge_builder = merge_builder.when_matched_update_all(
+                    predicate=change_predicate
+                )
+            merge_builder.when_not_matched_insert_all().execute()
+            return table_uri
 
         if not settings.is_minio:
             Path(table_uri).mkdir(parents=True, exist_ok=True)
