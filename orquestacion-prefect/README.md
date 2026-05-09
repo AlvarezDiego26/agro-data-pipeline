@@ -14,9 +14,7 @@ Ejecuta una corrida compuesta de `SISAP`:
 
 ### `sisap_master_flow`
 Planifica y lanza instancias independientes de `SISAP` por:
-- `scope`
-- `producto`
-- `producto x scope`
+- `modulo`
 
 Cada instancia corre su propio proceso Python y mantiene su control aislado.
 
@@ -32,8 +30,6 @@ Ejecuta en secuencia:
 ## Estructura
 - `src/agro_orquestacion/config.py`
   - variables base, defaults y armado de `env`
-- `src/agro_orquestacion/planner.py`
-  - construccion de unidades de trabajo para `SISAP`
 - `src/agro_orquestacion/runner.py`
   - ejecuta modulos Python y retransmite logs a `Prefect`
 - `src/agro_orquestacion/flows.py`
@@ -44,15 +40,11 @@ Ejecuta en secuencia:
   - scheduling local opcional
 
 ## Estrategias De Instanciacion SISAP
-- `por_scope`
-  - una instancia por procedencia o por region segun el modulo
-- `por_producto`
-  - una instancia por producto usando un scope fijo
-- `por_producto_scope`
-  - una instancia por combinacion `producto x procedencia` o `producto x region`
+- `por_modulo`
+  - una instancia por modulo de `SISAP`
 
 La recomendacion operativa para el primer cierre es:
-- usar `por_scope`
+- usar `por_modulo`
 - subir `SISAP_MAX_INSTANCIAS_PARALELAS` de forma gradual
 - medir hasta donde aguanta `SISAP` sin bloquear la IP
 
@@ -64,21 +56,21 @@ PREFECT_EXECUTION_MODE=process
 PREFECT_WORK_POOL_NAME=
 PREFECT_MANAGED_WORK_POOL_NAME=agro-managed-pool
 PREFECT_PROCESS_WORK_POOL_NAME=agro-process-pool
-PREFECT_REPO_URL=https://github.com/AlvarezDiego26/agro-data-pipeline.git
+PREFECT_REPO_URL=https://github.com/tu-organizacion/tu-repo.git
 PREFECT_REPO_BRANCH=main
 PREFECT_GITHUB_USERNAME=
-PREFECT_GITHUB_ACCESS_TOKEN=...
-PREFECT_GITHUB_SECRET_BLOCK_NAME=github-agro-data-pipeline-token
+PREFECT_GITHUB_ACCESS_TOKEN=
+PREFECT_GITHUB_SECRET_BLOCK_NAME=github-repo-read-token
 STORAGE_BACKEND=minio
 DELTA_ENABLED=true
-MINIO_ENDPOINT=http://38.210.246.165:30090
-MINIO_ACCESS_KEY=...
-MINIO_SECRET_KEY=...
-MINIO_BUCKET=agro-productos
+MINIO_ENDPOINT=http://minio-api:9000
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
+MINIO_BUCKET=nombre-del-bucket
 MINIO_REGION=us-east-1
 SISAP_MINIO_PREFIX=Landing/sisap
 SUNAT_MINIO_PREFIX=Landing/sunat
-SISAP_ESTRATEGIA_INSTANCIACION=por_scope
+SISAP_ESTRATEGIA_INSTANCIACION=por_modulo
 SISAP_MAX_INSTANCIAS_PARALELAS=8
 SISAP_PRODUCTOS=all
 ```
@@ -159,7 +151,7 @@ En este modo:
 - no usa contenedor `managed`
 - no depende del clone remoto en runtime
 - corre en tu propia maquina mediante un worker `process`
-- usa `PYTHONPATH` y `working_dir` absolutos del repo local
+- resuelve `PYTHONPATH` y `working_dir` desde el repo local del worker
 
 ### Worker Local Recomendado
 Crear el pool `process`:

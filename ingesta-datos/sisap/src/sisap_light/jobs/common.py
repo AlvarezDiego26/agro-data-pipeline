@@ -17,6 +17,7 @@ from sisap_light.procesamiento.storage.control import (
     upsert_control_records,
 )
 from sisap_light.procesamiento.storage.delta import save_delta_table
+from sisap_light.procesamiento.storage.merge import deduplicate_dataset
 from sisap_light.procesamiento.storage.parquet import save_partitioned_parquet
 from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
 
@@ -449,7 +450,7 @@ def append_partitioned_output(
         raise ValueError(f'La corrida parcial de {output_name} no produjo data util.')
 
     final_df = pl.concat(frames, how='vertical_relaxed')
-    final_df = final_df.unique().sort(sort_columns)
+    final_df = deduplicate_dataset(final_df, output_name).sort(sort_columns)
     final_df = final_df.with_columns(
         pl.col('fecha').dt.year().cast(pl.Int32).alias('anio'),
         pl.col('fecha').dt.strftime('%m').alias('mes'),
@@ -477,6 +478,6 @@ def append_partitioned_output(
         if settings.delta_enabled:
             save_delta_table(product_df, dataset_name, ['anio', 'mes'])
         else:
-            save_partitioned_parquet(product_df, output, ['anio', 'mes'])
+            save_partitioned_parquet(product_df, dataset_name, output, ['anio', 'mes'])
 
     return scope_output

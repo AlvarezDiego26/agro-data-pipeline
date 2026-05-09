@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 from pyarrow import fs
 
 from sisap_light.config import get_settings
+from sisap_light.procesamiento.storage.merge import deduplicate_dataset
 
 
 PARTITION_FILE_NAME = "data.parquet"
@@ -58,7 +59,12 @@ def _write_minio_parquet(s3_fs: fs.S3FileSystem, object_path: str, df: pl.DataFr
         pq.write_table(df.to_arrow(), sink)
 
 
-def save_partitioned_parquet(df: pl.DataFrame, base_dir: Path, partition_cols: list[str]) -> None:
+def save_partitioned_parquet(
+    df: pl.DataFrame,
+    dataset_name: str,
+    base_dir: Path,
+    partition_cols: list[str],
+) -> None:
     if df.is_empty():
         return
 
@@ -82,7 +88,12 @@ def save_partitioned_parquet(df: pl.DataFrame, base_dir: Path, partition_cols: l
             object_path = _build_minio_object_path(base_dir, folder)
             existing_df = _read_minio_parquet(s3_fs, object_path)
             if existing_df is not None:
-                partition_df = pl.concat([existing_df, partition_df], how="vertical_relaxed").unique()
+                partition_df = deduplicate_dataset(
+                    pl.concat([existing_df, partition_df], how="vertical_relaxed"),
+                    dataset_name,
+                )
+            else:
+                partition_df = deduplicate_dataset(partition_df, dataset_name)
             _write_minio_parquet(s3_fs, object_path, partition_df)
             continue
 
@@ -90,7 +101,12 @@ def save_partitioned_parquet(df: pl.DataFrame, base_dir: Path, partition_cols: l
 
         if output_path.exists():
             existing_df = pl.read_parquet(output_path)
-            partition_df = pl.concat([existing_df, partition_df], how="vertical_relaxed").unique()
+            partition_df = deduplicate_dataset(
+                pl.concat([existing_df, partition_df], how="vertical_relaxed"),
+                dataset_name,
+            )
+        else:
+            partition_df = deduplicate_dataset(partition_df, dataset_name)
 
         partition_df.write_parquet(output_path)
 

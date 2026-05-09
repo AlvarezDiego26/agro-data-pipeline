@@ -24,15 +24,15 @@ class Settings(BaseSettings):
     prefect_enable_sunat: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
-    prefect_repo_url: str = "https://github.com/AlvarezDiego26/agro-data-pipeline.git"
+    prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
     prefect_repo_branch: str = "main"
     prefect_github_access_token: str = ""
     prefect_github_username: str = ""
-    prefect_github_secret_block_name: str = "github-agro-data-pipeline-token"
+    prefect_github_secret_block_name: str = "github-repo-read-token"
 
     storage_backend: str = "minio"
     delta_enabled: bool = True
-    minio_endpoint: str = "http://38.210.246.165:30090"
+    minio_endpoint: str = "http://minio-api:9000"
     minio_access_key: str = ""
     minio_secret_key: str = ""
     minio_bucket: str = "agro-productos"
