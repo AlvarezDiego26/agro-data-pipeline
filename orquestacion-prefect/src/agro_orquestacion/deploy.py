@@ -8,7 +8,7 @@ from prefect.runner.storage import GitRepository
 from prefect.types.entrypoint import EntrypointType
 
 from agro_orquestacion.config import get_settings
-from agro_orquestacion.flows import sisap_main_flow, sisap_master_flow, sunat_main_flow
+from agro_orquestacion.flows import agro_ingesta_flow, sisap_main_flow, sisap_master_flow, sunat_main_flow
 
 
 def _runtime_env(base_env: dict[str, str], *, pythonpath: str) -> dict[str, str]:
@@ -133,6 +133,19 @@ def _deploy_managed(settings) -> None:
         tags=["sunat", "managed", "ingesta"],
     )
 
+    agro_ingesta_flow.from_source(
+        source=source,
+        entrypoint="orquestacion-prefect/src/agro_orquestacion/flows.py:agro_ingesta_flow",
+    ).deploy(
+        name="agro-managed",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        job_variables={
+            "pip_packages": settings.prefect_requirements,
+            "env": runtime_env,
+        },
+        tags=["agro", "managed", "ingesta"],
+    )
+
 
 def _deploy_process(settings) -> None:
     runtime_pythonpath = str(settings.orquestacion_root / "src")
@@ -205,10 +218,22 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    agro_ingesta = agro_ingesta_flow.to_deployment(
+        name="agro-local",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        job_variables={
+            "env": _runtime_env(settings.sisap_env(), pythonpath=runtime_pythonpath),
+            "working_dir": working_dir,
+        },
+        tags=["agro", "local", "process", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     deploy_runner(
         sisap_main,
         sisap_master,
         sunat_main,
+        agro_ingesta,
         work_pool_name=settings.prefect_target_work_pool_name,
         build=False,
         push=False,

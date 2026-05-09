@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     sisap_procedencias: str = "all"
     sisap_regiones: str = "all"
     sisap_productos: str = "all"
-    sisap_estrategia_instanciacion: str = "por_scope"
+    sisap_estrategia_instanciacion: str = "por_modulo"
     sisap_max_instancias_paralelas: int = 8
     sisap_max_scopes: int | None = None
     sisap_max_productos: int | None = None
