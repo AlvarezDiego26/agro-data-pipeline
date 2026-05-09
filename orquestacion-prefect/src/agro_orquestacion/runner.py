@@ -8,22 +8,17 @@ from pathlib import Path
 from prefect.logging import get_run_logger
 
 
-def run_python_module(
-    module_name: str,
-    arguments: list[str] | None = None,
+def run_command(
+    command: list[str],
     working_dir: Path | None = None,
     environment: dict[str, str] | None = None,
 ) -> None:
     logger = get_run_logger()
-    command = [sys.executable, "-m", module_name]
-    if arguments:
-        command.extend(arguments)
-
     merged_env = os.environ.copy()
     if environment:
         merged_env.update({key: value for key, value in environment.items() if value is not None})
 
-    logger.info("Ejecutando modulo: {}", " ".join(command))
+    logger.info("Ejecutando comando: %s", " ".join(command))
     process = subprocess.Popen(
         command,
         cwd=str(working_dir or Path.cwd()),
@@ -43,4 +38,29 @@ def run_python_module(
 
     return_code = process.wait()
     if return_code != 0:
-        raise RuntimeError(f"El modulo {module_name} fallo con codigo {return_code}.")
+        raise RuntimeError(f"El comando {' '.join(command)} fallo con codigo {return_code}.")
+
+
+def install_requirements(
+    requirements_file: Path,
+    working_dir: Path,
+    environment: dict[str, str] | None = None,
+) -> None:
+    run_command(
+        [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
+        working_dir=working_dir,
+        environment=environment,
+    )
+
+
+def run_python_module(
+    module_name: str,
+    arguments: list[str] | None = None,
+    working_dir: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> None:
+    command = [sys.executable, "-m", module_name]
+    if arguments:
+        command.extend(arguments)
+    run_command(command, working_dir=working_dir, environment=environment)
+

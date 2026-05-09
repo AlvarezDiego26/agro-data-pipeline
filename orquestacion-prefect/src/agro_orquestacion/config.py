@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
-    prefect_work_pool_name: str = "agro-managed-pool"
+    prefect_execution_mode: str = "managed"
+    prefect_work_pool_name: str = ""
+    prefect_managed_work_pool_name: str = "agro-managed-pool"
+    prefect_process_work_pool_name: str = "agro-process-pool"
     prefect_sisap_interval_hours: int = 4
     prefect_sunat_interval_hours: int = 6
     prefect_sisap_master_interval_hours: int = 4
@@ -21,6 +24,11 @@ class Settings(BaseSettings):
     prefect_enable_sunat: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
+    prefect_repo_url: str = "https://github.com/AlvarezDiego26/agro-data-pipeline.git"
+    prefect_repo_branch: str = "main"
+    prefect_github_access_token: str = ""
+    prefect_github_username: str = ""
+    prefect_github_secret_block_name: str = "github-agro-data-pipeline-token"
 
     storage_backend: str = "minio"
     delta_enabled: bool = True
@@ -42,6 +50,8 @@ class Settings(BaseSettings):
     sisap_productos: str = "all"
     sisap_estrategia_instanciacion: str = "por_scope"
     sisap_max_instancias_paralelas: int = 8
+    sisap_max_scopes: int | None = None
+    sisap_max_productos: int | None = None
     sisap_max_queries: int | None = None
     sisap_scope_max_workers: int = 2
     sisap_shard_max_workers: int = 4
@@ -56,6 +66,10 @@ class Settings(BaseSettings):
         return Path(__file__).resolve().parents[3]
 
     @property
+    def orquestacion_root(self) -> Path:
+        return self.repo_root / "orquestacion-prefect"
+
+    @property
     def sisap_root(self) -> Path:
         return self.repo_root / "ingesta-datos" / "sisap"
 
@@ -67,22 +81,18 @@ class Settings(BaseSettings):
     def prefect_requirements(self) -> list[str]:
         return [
             "prefect>=3,<4",
-            "httpx==0.28.1",
-            "selectolax==0.3.26",
-            "lxml==5.4.0",
-            "polars==1.30.0",
-            "pyarrow==20.0.0",
-            "deltalake==0.18.2",
-            "dbfread==2.0.7",
-            "openpyxl==3.1.5",
-            "fastexcel==0.13.0",
             "pydantic==2.11.4",
             "pydantic-settings==2.9.1",
             "python-dotenv==1.1.0",
-            "typer==0.15.4",
-            "tenacity==9.1.2",
-            "loguru==0.7.3",
         ]
+
+    @property
+    def prefect_target_work_pool_name(self) -> str:
+        if self.prefect_work_pool_name:
+            return self.prefect_work_pool_name
+        if self.prefect_execution_mode.lower() == "process":
+            return self.prefect_process_work_pool_name
+        return self.prefect_managed_work_pool_name
 
     def sisap_env(self) -> dict[str, str]:
         env: dict[str, str] = {
@@ -105,6 +115,10 @@ class Settings(BaseSettings):
             "SISAP_SHARD_MAX_WORKERS": str(self.sisap_shard_max_workers),
             "SISAP_PRODUCT_BATCH_SIZE": str(self.sisap_product_batch_size),
         }
+        if self.sisap_max_scopes is not None:
+            env["SISAP_MAX_SCOPES"] = str(self.sisap_max_scopes)
+        if self.sisap_max_productos is not None:
+            env["SISAP_MAX_PRODUCTOS"] = str(self.sisap_max_productos)
         if self.sisap_max_queries is not None:
             env["SISAP_MAX_QUERIES"] = str(self.sisap_max_queries)
         return env

@@ -9,11 +9,12 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_ciudades import SisapCiudadesExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_control_event_row,
     build_scope_output_dir,
     filter_plan,
     init_control_states,
+    persist_control_events_batch,
     persist_control_states,
-    persist_control_event,
     register_control_failure,
     register_control_query,
     register_control_success,
@@ -219,6 +220,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         extractor = SisapCiudadesExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
+        control_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
                 'Procesando {} shard={} {}/{} producto={} codigo={}',
@@ -242,8 +244,17 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                         query,
                         estado='empty',
                     )
-                    persist_control_event(output_name, output_name, 'region', region['nombre'], query, 'empty', 'sin_resultados')
-                    persist_control_states(control_states)
+                    control_event_rows.append(
+                        build_control_event_row(
+                            output_name,
+                            output_name,
+                            'region',
+                            region['nombre'],
+                            query,
+                            'empty',
+                            'sin_resultados',
+                        )
+                    )
                     shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
                     continue
                 df = _with_expected_columns(
@@ -261,15 +272,33 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                     scope_value=region['nombre'],
                 )
                 register_control_success(control_states, output_name, output_name, 'region', region['nombre'], query)
-                persist_control_event(output_name, output_name, 'region', region['nombre'], query, 'success')
-                persist_control_states(control_states)
+                control_event_rows.append(
+                    build_control_event_row(
+                        output_name,
+                        output_name,
+                        'region',
+                        region['nombre'],
+                        query,
+                        'success',
+                    )
+                )
             except Exception as exc:
                 logger.exception('Fallo extrayendo {} para {} ({})', output_name, query.producto_nombre, query.producto_codigo)
                 register_control_failure(control_states, output_name, output_name, 'region', region['nombre'], query, str(exc))
-                persist_control_event(output_name, output_name, 'region', region['nombre'], query, 'error', str(exc))
-                persist_control_states(control_states)
+                control_event_rows.append(
+                    build_control_event_row(
+                        output_name,
+                        output_name,
+                        'region',
+                        region['nombre'],
+                        query,
+                        'error',
+                        str(exc),
+                    )
+                )
                 shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
 
+        persist_control_events_batch(control_event_rows)
         persist_control_states(control_states)
         return shard_errors
 

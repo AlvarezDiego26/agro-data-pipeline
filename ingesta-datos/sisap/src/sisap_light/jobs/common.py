@@ -5,6 +5,7 @@ import unicodedata
 from pathlib import Path
 
 import polars as pl
+from loguru import logger
 
 from sisap_light.ingesta_datos.catalogos.productos import PRODUCTOS_AGRICOLAS_PRIORITARIOS
 from sisap_light.config import get_settings
@@ -18,6 +19,10 @@ from sisap_light.procesamiento.storage.control import (
 from sisap_light.procesamiento.storage.delta import save_delta_table
 from sisap_light.procesamiento.storage.parquet import save_partitioned_parquet
 from sisap_light.procesamiento.validators.quality import validate_expected_columns, validate_non_empty
+
+
+_CONTROL_LAST_SUCCESS_CACHE: dict[tuple[str, str, str, str, str, str], object | None] = {}
+_CONTROL_READ_DISABLED = False
 
 
 def normalize_text(value: str | None) -> str:
@@ -75,7 +80,11 @@ def resolve_productos(producto_codigo: str | None, producto_nombre: str | None) 
             raise ValueError('No se pudo resolver el producto por nombre.')
         return [producto]
 
-    return PRODUCTOS_AGRICOLAS_PRIORITARIOS
+    settings = get_settings()
+    productos = PRODUCTOS_AGRICOLAS_PRIORITARIOS
+    if settings.sisap_max_productos is not None and settings.sisap_max_productos > 0:
+        return productos[: settings.sisap_max_productos]
+    return productos
 
 
 def filter_plan(plan: list, max_queries: int | None) -> list:
@@ -159,20 +168,32 @@ def resolve_query_dates(
     fecha_inicio: date,
     fecha_fin: date,
 ) -> tuple[date, date] | None:
+    global _CONTROL_READ_DISABLED
     settings = get_settings()
     if settings.is_manual or not settings.is_incremental:
         return fecha_inicio, fecha_fin
 
     last_loaded: date | None = None
-    if settings.sisap_use_control_table:
-        control_last = get_last_successful_date(
-            fuente='sisap',
-            modulo=control_modulo,
-            dataset=output_name,
-            scope_tipo=scope_label,
-            scope_valor=scope_value,
-            producto_codigo=producto_codigo,
-        )
+    if settings.sisap_use_control_table and not _CONTROL_READ_DISABLED:
+        cache_key = ('sisap', control_modulo, output_name, scope_label, scope_value, producto_codigo)
+        if cache_key not in _CONTROL_LAST_SUCCESS_CACHE:
+            try:
+                _CONTROL_LAST_SUCCESS_CACHE[cache_key] = get_last_successful_date(
+                    fuente='sisap',
+                    modulo=control_modulo,
+                    dataset=output_name,
+                    scope_tipo=scope_label,
+                    scope_valor=scope_value,
+                    producto_codigo=producto_codigo,
+                )
+            except TimeoutError:
+                _CONTROL_READ_DISABLED = True
+                _CONTROL_LAST_SUCCESS_CACHE[cache_key] = None
+                logger.warning(
+                    'Se deshabilita la lectura de tabla de control para esta corrida; '
+                    'se continuara usando la ultima fecha detectada en los datos escritos.'
+                )
+        control_last = _CONTROL_LAST_SUCCESS_CACHE[cache_key]
         if control_last is not None:
             last_loaded = control_last
 
@@ -283,6 +304,8 @@ def register_control_failure(
 
 
 def persist_control_states(states: dict[tuple[str, str], dict]) -> str:
+    if not get_settings().sisap_use_control_table:
+        return ''
     if not states:
         return ''
 
@@ -340,6 +363,8 @@ def persist_control_event(
     estado: str,
     mensaje_error: str | None = None,
 ) -> str:
+    if not get_settings().sisap_use_control_table:
+        return ''
     now = build_control_record_timestamp()
     ultima_fecha_exitosa = query.fecha_fin if estado in {'success', 'partial'} else None
     event_df = pl.DataFrame(
@@ -368,6 +393,48 @@ def persist_control_event(
         ]
     )
     return append_control_events(event_df)
+
+
+def build_control_event_row(
+    modulo: str,
+    dataset: str,
+    scope_label: str,
+    scope_value: str,
+    query,
+    estado: str,
+    mensaje_error: str | None = None,
+) -> dict[str, object]:
+    now = build_control_record_timestamp()
+    ultima_fecha_exitosa = query.fecha_fin if estado in {'success', 'partial'} else None
+    return {
+        'evento_id': build_control_event_id(),
+        'fuente': 'sisap',
+        'modulo': modulo,
+        'dataset': dataset,
+        'scope_tipo': scope_label,
+        'scope_valor': scope_value,
+        'producto_codigo': query.producto_codigo,
+        'producto_nombre': query.producto_nombre,
+        'modo_carga': get_settings().sisap_modo_carga,
+        'fecha_inicio_solicitada': query.fecha_inicio,
+        'fecha_fin_solicitada': query.fecha_fin,
+        'fecha_inicio_ejecutada': query.fecha_inicio,
+        'fecha_fin_ejecutada': query.fecha_fin,
+        'ultima_fecha_exitosa': ultima_fecha_exitosa,
+        'estado': estado,
+        'mensaje_error': mensaje_error or '',
+        'ejecutado_por': 'sisap_light',
+        'fecha_ejecucion': now,
+        'fecha_actualizacion': now,
+    }
+
+
+def persist_control_events_batch(event_rows: list[dict[str, object]]) -> str:
+    if not get_settings().sisap_use_control_table:
+        return ''
+    if not event_rows:
+        return ''
+    return append_control_events(pl.DataFrame(event_rows))
 
 
 def append_partitioned_output(

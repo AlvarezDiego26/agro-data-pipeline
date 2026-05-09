@@ -1,15 +1,17 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
-from prefect import serve
+from prefect.runner import Runner
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import sisap_master_flow, sunat_main_flow
 
 
-def main() -> None:
+async def _serve() -> None:
     settings = get_settings()
+    runner = Runner(name="agro-local-runner", pause_on_shutdown=False)
 
     sisap_deployment = sisap_master_flow.to_deployment(
         name="sisap-master-cada-4-horas",
@@ -23,12 +25,13 @@ def main() -> None:
         tags=["sunat", "ingesta"],
     )
 
-    serve(
-        sisap_deployment,
-        sunat_deployment,
-        pause_on_shutdown=False,
-        print_starting_message=True,
-    )
+    await runner.add_deployment(sisap_deployment)
+    await runner.add_deployment(sunat_deployment)
+    await runner.start()
+
+
+def main() -> None:
+    asyncio.run(_serve())
 
 
 if __name__ == "__main__":

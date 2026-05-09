@@ -41,10 +41,12 @@ class Settings(BaseSettings):
     sisap_mercado_nombre: str = 'Lima Metropolitana'
     sisap_producto_codigo: str | None = None
     sisap_producto_nombre: str | None = None
+    sisap_max_productos: int | None = None
     sisap_max_queries: int | None = None
     sisap_modulos: str = 'volumen,precios,ciudades-mayoristas,ciudades-minoristas'
     sisap_procedencias: str = 'all'
     sisap_regiones: str = 'all'
+    sisap_max_scopes: int | None = None
     sisap_pause_seconds: int = 30
     sisap_parallel_enabled: bool = True
     sisap_scope_max_workers: int = 2
@@ -181,14 +183,18 @@ class Settings(BaseSettings):
     def procedencias_resueltas(self) -> list[str]:
         values = self._split_csv(self.sisap_procedencias)
         if not values or self._is_all_keyword(values):
-            return self._all_scopes()
+            values = self._all_scopes()
+        if self.sisap_max_scopes is not None and self.sisap_max_scopes > 0:
+            return values[: self.sisap_max_scopes]
         return values
 
     @property
     def regiones_resueltas(self) -> list[str]:
         values = self._split_csv(self.sisap_regiones)
         if not values or self._is_all_keyword(values):
-            return self._all_scopes()
+            values = self._all_scopes()
+        if self.sisap_max_scopes is not None and self.sisap_max_scopes > 0:
+            return values[: self.sisap_max_scopes]
         return values
 
     @property

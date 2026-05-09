@@ -9,11 +9,12 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_control_event_row,
     build_scope_output_dir,
     filter_plan,
     init_control_states,
+    persist_control_events_batch,
     persist_control_states,
-    persist_control_event,
     register_control_failure,
     register_control_query,
     register_control_success,
@@ -165,6 +166,7 @@ def run_full(procedencia_nombre: str | None = None) -> Path:
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
+        control_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
                 'Procesando volumen shard={} {}/{} producto={} codigo={}',
@@ -190,8 +192,17 @@ def run_full(procedencia_nombre: str | None = None) -> Path:
                         query,
                         estado='empty',
                     )
-                    persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'empty', 'sin_resultados')
-                    persist_control_states(control_states)
+                    control_event_rows.append(
+                        build_control_event_row(
+                            'volumen',
+                            'volumen_diario',
+                            'procedencia',
+                            procedencia['nombre'],
+                            query,
+                            'empty',
+                            'sin_resultados',
+                        )
+                    )
                     shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
                     continue
 
@@ -205,15 +216,33 @@ def run_full(procedencia_nombre: str | None = None) -> Path:
                     scope_value=procedencia['nombre'],
                 )
                 register_control_success(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query)
-                persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'success')
-                persist_control_states(control_states)
+                control_event_rows.append(
+                    build_control_event_row(
+                        'volumen',
+                        'volumen_diario',
+                        'procedencia',
+                        procedencia['nombre'],
+                        query,
+                        'success',
+                    )
+                )
             except Exception as exc:
                 logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
                 register_control_failure(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, str(exc))
-                persist_control_event('volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, 'error', str(exc))
-                persist_control_states(control_states)
+                control_event_rows.append(
+                    build_control_event_row(
+                        'volumen',
+                        'volumen_diario',
+                        'procedencia',
+                        procedencia['nombre'],
+                        query,
+                        'error',
+                        str(exc),
+                    )
+                )
                 shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
 
+        persist_control_events_batch(control_event_rows)
         persist_control_states(control_states)
         return shard_errors
 

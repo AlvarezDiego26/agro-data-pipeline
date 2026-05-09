@@ -1,3 +1,26 @@
+Metadata-Version: 2.4
+Name: agro-orquestacion-prefect
+Version: 0.1.0
+Summary: Orquestacion Prefect para pipelines SISAP y SUNAT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: prefect<4,>=3
+Requires-Dist: httpx==0.28.1
+Requires-Dist: selectolax==0.3.26
+Requires-Dist: lxml==5.4.0
+Requires-Dist: polars==1.30.0
+Requires-Dist: pyarrow==20.0.0
+Requires-Dist: deltalake==0.18.2
+Requires-Dist: dbfread==2.0.7
+Requires-Dist: openpyxl==3.1.5
+Requires-Dist: fastexcel==0.13.0
+Requires-Dist: pydantic==2.11.4
+Requires-Dist: pydantic-settings==2.9.1
+Requires-Dist: python-dotenv==1.1.0
+Requires-Dist: typer==0.15.4
+Requires-Dist: tenacity==9.1.2
+Requires-Dist: loguru==0.7.3
+
 # Orquestacion Prefect
 
 Capa de orquestacion para ejecutar `SISAP` y `SUNAT` con `Prefect` sin duplicar la logica de negocio de cada pipeline.
@@ -5,7 +28,7 @@ Capa de orquestacion para ejecutar `SISAP` y `SUNAT` con `Prefect` sin duplicar 
 ## Objetivo
 - encapsular las corridas de `SISAP` y `SUNAT` como flows independientes
 - permitir una capa maestra para `SISAP` que lance unidades autonomas en paralelo
-- dejar listo el despliegue sobre `Prefect Cloud` tanto en `managed pool` como en `process worker` local
+- dejar listo el despliegue sobre `Prefect Cloud` con `managed pool`
 
 ## Que Orquesta
 ### `sisap_main_flow`
@@ -39,7 +62,7 @@ Ejecuta en secuencia:
 - `src/agro_orquestacion/flows.py`
   - flows de `SISAP`, `SUNAT` y combinado
 - `src/agro_orquestacion/deploy.py`
-  - helper para publicar deployments `managed` o `process`
+  - helper para publicar deployments en `agro-managed-pool`
 - `src/agro_orquestacion/serve.py`
   - scheduling local opcional
 
@@ -60,15 +83,7 @@ La recomendacion operativa para el primer cierre es:
 Configurar al menos:
 
 ```env
-PREFECT_EXECUTION_MODE=process
-PREFECT_WORK_POOL_NAME=
-PREFECT_MANAGED_WORK_POOL_NAME=agro-managed-pool
-PREFECT_PROCESS_WORK_POOL_NAME=agro-process-pool
-PREFECT_REPO_URL=https://github.com/AlvarezDiego26/agro-data-pipeline.git
-PREFECT_REPO_BRANCH=main
-PREFECT_GITHUB_USERNAME=
-PREFECT_GITHUB_ACCESS_TOKEN=...
-PREFECT_GITHUB_SECRET_BLOCK_NAME=github-agro-data-pipeline-token
+PREFECT_WORK_POOL_NAME=agro-managed-pool
 STORAGE_BACKEND=minio
 DELTA_ENABLED=true
 MINIO_ENDPOINT=http://38.210.246.165:30090
@@ -90,21 +105,6 @@ Tambien se pueden sobreescribir:
 - procedencias y regiones
 - paralelismo interno de shards
 - cantidad de instancias paralelas del maestro
-
-## Repo Privado En Prefect Cloud
-Para `GitHub` privado hay dos caminos:
-- recomendado a largo plazo: instalar el `GitHub App` de `Prefect Cloud`
-- salida operativa inmediata: usar `PREFECT_GITHUB_ACCESS_TOKEN` con un `PAT` fino de solo lectura
-
-Con el enfoque de token:
-- `PREFECT_GITHUB_ACCESS_TOKEN` debe tener permiso de lectura al repositorio
-- `PREFECT_GITHUB_SECRET_BLOCK_NAME` define el nombre del bloque `Secret` que `deploy.py` crea o actualiza automaticamente en `Prefect`
-
-El helper `python -m agro_orquestacion.deploy` no publica deployments managed si:
-- `MINIO_ACCESS_KEY` esta vacio
-- `MINIO_SECRET_KEY` esta vacio
-
-Eso evita dejar un deployment `Ready` que en runtime vaya a caerse por configuracion incompleta.
 
 ## Ejecucion Local
 ### SISAP maestro
@@ -139,42 +139,16 @@ Con la sesion de `Prefect Cloud` ya autenticada:
 python -m agro_orquestacion.deploy
 ```
 
-### Modo `managed`
-Si `PREFECT_EXECUTION_MODE=managed`, publica:
+Eso intenta publicar:
 - `sisap-managed`
 - `sisap-master-managed`
 - `sunat-managed`
 
-en el work pool configurado para `managed`.
+en el work pool:
+- `agro-managed-pool`
 
-### Modo `process`
-Si `PREFECT_EXECUTION_MODE=process`, publica:
-- `sisap-local`
-- `sisap-master-local`
-- `sunat-local`
-
-en el work pool configurado para `process`.
-
-En este modo:
-- no usa contenedor `managed`
-- no depende del clone remoto en runtime
-- corre en tu propia maquina mediante un worker `process`
-- usa `PYTHONPATH` y `working_dir` absolutos del repo local
-
-### Worker Local Recomendado
-Crear el pool `process`:
-
-```powershell
-prefect work-pool create "agro-process-pool" --type process
-```
-
-Levantar el worker local desde la raiz del repo:
-
-```powershell
-prefect worker start --pool "agro-process-pool" --type process --limit 4
-```
-
-Con esto, los runs de `sisap-master-local` y `sunat-local` ya generan logs reales del Python que se ejecuta en tu maquina.
+con source:
+- `https://github.com/OazisLabs/agro-proyecto.git`
 
 ## Principio De Diseño
 - `Prefect` orquesta

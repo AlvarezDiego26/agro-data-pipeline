@@ -1,31 +1,38 @@
-# Agro Proyecto
+﻿# Agro Proyecto
 
-Repositorio principal de pipelines de ingesta para fuentes agrarias.
+Repositorio principal de pipelines de ingesta y orquestacion para fuentes agrarias.
 
 ## Objetivo
-- centralizar scripts ligeros de extraccion y transformacion
-- guardar salidas tecnicas en `Parquet` y `Delta Parquet`
-- dejar los pipelines listos para encapsulamiento y scheduler
+- centralizar pipelines ligeros para fuentes agrarias
+- extraer y transformar datos tecnicos en formatos `Parquet` y `Delta Parquet`
+- almacenar datasets ordenados dentro del bucket bajo `Landing/`
+- dejar la ejecucion lista para automatizacion con `Prefect`
 
-## Estructura
+## Estructura Del Repositorio
 - `ingesta-datos/`
-  - `sisap/`: pipeline de volumen, precios y ciudades
-  - `sunat/`: pipeline de importacion y filtrado de exportaciones agrarias frescas
+  - `sisap/`: pipeline de mercado mayorista y ciudades
+  - `sunat/`: pipeline de exportaciones agrarias frescas
+- `orquestacion-prefect/`
+  - flows y scheduler para ejecutar `SISAP` y `SUNAT`
 
-## Estructura esperada en bucket
+## Capas Del Sistema
+### 1. Ingesta
+Cada fuente tiene su propio proyecto, configuracion, wrappers y `CLI` principal.
+
+### 2. Storage
+Los datasets tecnicos se guardan en `Delta Parquet` sobre storage compatible con `S3/MinIO`.
+
+### 3. Orquestacion
+`Prefect` ejecuta los wrappers de cada pipeline, registra logs y permite programar corridas periodicas.
+
+## Estructura Esperada En El Bucket
 - `Landing/`
   - `sisap/`
   - `sunat/`
 
-Cada pipeline escribe sus tablas `Delta Parquet` dentro de `Landing/<fuente>/...`.
+Dentro de cada fuente se guardan tablas `Delta Parquet` organizadas por dataset y sus particiones.
 
-## Principios del proyecto
-- herramientas ligeras para servidor
-- configuracion por `.env`
-- wrappers listos para automatizacion
-- separacion clara entre ingesta, procesamiento y ejecucion
-
-## Entrypoints principales
+## Entrypoints Principales
 ### SISAP
 ```powershell
 python -m sisap_light.cli run-main
@@ -46,7 +53,19 @@ Wrapper:
 powershell -ExecutionPolicy Bypass -File .\ingesta-datos\sunat\scripts\run_sunat_pipeline.ps1
 ```
 
-## Notas
+### Prefect
+```powershell
+python -m agro_orquestacion.flows agro
+```
+
+## Flujo General
+1. La fuente entrega datos o responde consultas.
+2. El pipeline de la fuente extrae y limpia.
+3. El dataset resultante se escribe en `Delta Parquet` dentro de `Landing/<fuente>/`.
+4. `Prefect` orquesta las corridas y registra estado, logs y reintentos.
+
+## Notas De Trabajo
 - no se versionan credenciales
 - no se versionan archivos generados en `data/`
+- `Prefect` no reemplaza la logica del pipeline; solo orquesta
 - cada subproyecto contiene su propia documentacion operativa

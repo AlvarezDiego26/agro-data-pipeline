@@ -75,6 +75,13 @@ def _module_specs() -> dict[str, ModuleRunSpec]:
 
 
 def _sync_control_queues() -> tuple[dict[str, object], dict[str, object]]:
+    settings = get_settings()
+    if not settings.sisap_use_control_table:
+        return (
+            {'synced': True, 'pending_records': 0, 'target': 'control-disabled'},
+            {'synced': True, 'pending_records': 0, 'target': 'control-disabled'},
+        )
+
     control_sync = sync_pending_control_state()
     events_sync = sync_pending_control_events()
     if not control_sync['synced']:
@@ -139,7 +146,8 @@ def run_pipeline_main() -> dict[str, object]:
     if settings.delta_enabled:
         warm_delta_runtime()
 
-    _sync_control_queues()
+    if settings.sisap_use_control_table:
+        _sync_control_queues()
 
     for modulo in settings.modulos_resueltos:
         spec = module_specs.get(modulo)
@@ -147,8 +155,22 @@ def run_pipeline_main() -> dict[str, object]:
             raise ValueError(f'Modulo no soportado: {modulo}')
         resultados.extend(_run_module_scope(modulo, spec, pause_seconds))
 
-    final_control_sync, final_events_sync = _sync_control_queues()
-    control_status = get_control_sync_status()
+    if settings.sisap_use_control_table:
+        final_control_sync, final_events_sync = _sync_control_queues()
+        control_status = get_control_sync_status()
+    else:
+        final_control_sync = {'synced': True, 'pending_records': 0, 'target': 'control-disabled'}
+        final_events_sync = {'synced': True, 'pending_records': 0, 'target': 'control-disabled'}
+        control_status = {
+            'pending_records': 0,
+            'local_records': 0,
+            'pending_path': 'control-disabled',
+            'local_path': 'control-disabled',
+            'pending_event_records': 0,
+            'local_event_records': 0,
+            'pending_events_path': 'control-disabled',
+            'local_events_path': 'control-disabled',
+        }
     return {
         'modulos': settings.modulos_resueltos,
         'procedencias': settings.procedencias_resueltas,
