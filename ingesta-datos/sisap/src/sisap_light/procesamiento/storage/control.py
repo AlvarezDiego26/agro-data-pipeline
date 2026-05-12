@@ -20,6 +20,7 @@ CONTROL_KEY_COLUMNS = [
     'dataset',
     'scope_tipo',
     'scope_valor',
+    'mercado_codigo',
     'producto_codigo',
 ]
 
@@ -29,6 +30,8 @@ CONTROL_STRING_COLUMNS = [
     'dataset',
     'scope_tipo',
     'scope_valor',
+    'mercado_codigo',
+    'mercado_nombre',
     'producto_codigo',
     'producto_nombre',
     'modo_carga',
@@ -37,12 +40,18 @@ CONTROL_STRING_COLUMNS = [
     'ejecutado_por',
 ]
 
+CONTROL_BOOL_COLUMNS = [
+    'historico_completo',
+]
+
 CONTROL_DATE_COLUMNS = [
     'fecha_inicio_solicitada',
     'fecha_fin_solicitada',
     'fecha_inicio_ejecutada',
     'fecha_fin_ejecutada',
     'ultima_fecha_exitosa',
+    'fecha_minima_exitosa',
+    'fecha_maxima_exitosa',
 ]
 
 CONTROL_DATETIME_COLUMNS = [
@@ -55,7 +64,7 @@ CONTROL_EVENT_KEY_COLUMNS = [
 ]
 
 CONTROL_STATE_LOCK = RLock()
-LOCK_TIMEOUT_SECONDS = 60.0
+LOCK_TIMEOUT_SECONDS = 900.0  # Increased from 300 to 15 minutes for distributed scenarios with multiple parallel tasks
 LOCK_POLL_SECONDS = 0.2
 
 
@@ -91,16 +100,69 @@ def _control_lock_path() -> Path:
     return local_path.parent / '.control_state.lock.d'
 
 
+def _read_lock_owner_pid(owner_path: Path) -> int | None:
+    try:
+        if not owner_path.exists():
+            return None
+        raw_value = owner_path.read_text(encoding='utf-8').strip()
+        return int(raw_value) if raw_value else None
+    except (OSError, ValueError):
+        return None
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 @contextmanager
 def _file_lock(lock_path: Path, timeout_seconds: float = LOCK_TIMEOUT_SECONDS):
     start = time.monotonic()
+    stale_lock_threshold = timeout_seconds * 0.75  # More aggressive stale detection
+    retry_count = 0
+    
     while True:
         try:
             lock_path.mkdir(exist_ok=False)
             break
         except FileExistsError:
-            if time.monotonic() - start >= timeout_seconds:
-                raise TimeoutError(f'No se pudo adquirir el lock de control en {lock_path}.')
+            retry_count += 1
+            try:
+                lock_age_seconds = time.time() - lock_path.stat().st_mtime
+                owner_pid = _read_lock_owner_pid(lock_path / 'owner.txt')
+                
+                # Check if lock is stale (old or orphaned process)
+                is_orphaned = owner_pid is not None and not _process_exists(owner_pid)
+                is_too_old = lock_age_seconds > stale_lock_threshold
+                
+                if is_orphaned or is_too_old:
+                    reason = 'orphaned' if is_orphaned else f'too old ({lock_age_seconds:.1f}s)'
+                    logger.warning(
+                        'Detectado lock {} en {} con pid {} (intento #{}).',
+                        reason,
+                        lock_path,
+                        owner_pid,
+                        retry_count,
+                    )
+                    import shutil
+                    shutil.rmtree(lock_path, ignore_errors=True)
+                    continue
+            except OSError as e:
+                logger.debug(f'Error al revisar lock en {lock_path}: {e}')
+                pass
+
+            elapsed = time.monotonic() - start
+            if elapsed >= timeout_seconds:
+                raise TimeoutError(f'No se pudo adquirir el lock de control en {lock_path} después de {elapsed:.1f}s.')
             time.sleep(LOCK_POLL_SECONDS)
 
     owner_path = lock_path / 'owner.txt'
@@ -133,6 +195,9 @@ def _normalize_control_frame(frame: pl.DataFrame) -> pl.DataFrame:
     for column in CONTROL_STRING_COLUMNS:
         if column in frame.columns:
             expressions.append(pl.col(column).cast(pl.Utf8, strict=False).fill_null(''))
+    for column in CONTROL_BOOL_COLUMNS:
+        if column in frame.columns:
+            expressions.append(pl.col(column).cast(pl.Boolean, strict=False).fill_null(False))
     for column in CONTROL_DATE_COLUMNS:
         if column in frame.columns:
             expressions.append(pl.col(column).cast(pl.Date, strict=False))
@@ -142,11 +207,24 @@ def _normalize_control_frame(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(expressions)
 
 
+def _align_control_keys_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Registros legacy sin mercado: columnas requeridas por CONTROL_KEY_COLUMNS."""
+    if frame.is_empty():
+        return frame
+    out = frame
+    if 'mercado_codigo' not in out.columns:
+        out = out.with_columns(pl.lit('').alias('mercado_codigo'))
+    if 'mercado_nombre' not in out.columns:
+        out = out.with_columns(pl.lit('').alias('mercado_nombre'))
+    return out
+
+
 def _merge_control_frames(*frames: pl.DataFrame) -> pl.DataFrame:
     normalized = [_normalize_control_frame(frame) for frame in frames if not frame.is_empty()]
     if not normalized:
         return pl.DataFrame()
-    merged = pl.concat(normalized, how='vertical_relaxed')
+    merged = pl.concat(normalized, how='diagonal_relaxed')
+    merged = _align_control_keys_columns(merged)
     if 'fecha_actualizacion' not in merged.columns:
         return merged
     return merged.sort('fecha_actualizacion').unique(subset=CONTROL_KEY_COLUMNS, keep='last')
@@ -156,7 +234,7 @@ def _append_event_frames(*frames: pl.DataFrame) -> pl.DataFrame:
     normalized = [_normalize_control_frame(frame) for frame in frames if not frame.is_empty()]
     if not normalized:
         return pl.DataFrame()
-    merged = pl.concat(normalized, how='vertical_relaxed')
+    merged = pl.concat(normalized, how='diagonal_relaxed')
     if 'fecha_actualizacion' in merged.columns:
         merged = merged.sort('fecha_actualizacion')
     if 'evento_id' in merged.columns:
@@ -256,6 +334,17 @@ def read_control_table() -> pl.DataFrame:
         return _merge_control_frames(local_state, pending_state)
 
 
+def _ensure_control_mercado_columns(control_df: pl.DataFrame) -> pl.DataFrame:
+    if control_df.is_empty():
+        return control_df
+    out = control_df
+    if 'mercado_codigo' not in out.columns:
+        out = out.with_columns(pl.lit('').alias('mercado_codigo'))
+    if 'mercado_nombre' not in out.columns:
+        out = out.with_columns(pl.lit('').alias('mercado_nombre'))
+    return out
+
+
 def get_last_successful_date(
     fuente: str,
     modulo: str,
@@ -263,11 +352,13 @@ def get_last_successful_date(
     scope_tipo: str,
     scope_valor: str,
     producto_codigo: str,
+    mercado_codigo: str | None = None,
 ) -> object | None:
-    control_df = read_control_table()
+    control_df = _ensure_control_mercado_columns(read_control_table())
     if control_df.is_empty():
         return None
 
+    mc = mercado_codigo if mercado_codigo is not None else ''
     filtered = control_df.filter(
         (pl.col('fuente') == fuente)
         & (pl.col('modulo') == modulo)
@@ -275,11 +366,42 @@ def get_last_successful_date(
         & (pl.col('scope_tipo') == scope_tipo)
         & (pl.col('scope_valor') == scope_valor)
         & (pl.col('producto_codigo') == producto_codigo)
+        & (pl.col('mercado_codigo').fill_null('') == mc)
         & (pl.col('ultima_fecha_exitosa').is_not_null())
     )
     if filtered.is_empty():
         return None
     return filtered.sort('fecha_actualizacion').get_column('ultima_fecha_exitosa').tail(1).item()
+
+
+def get_control_status(
+    fuente: str,
+    modulo: str,
+    dataset: str,
+    scope_tipo: str,
+    scope_valor: str,
+    producto_codigo: str,
+    mercado_codigo: str | None = None,
+) -> dict[str, object] | None:
+    control_df = _ensure_control_mercado_columns(read_control_table())
+    if control_df.is_empty():
+        return None
+
+    mc = mercado_codigo if mercado_codigo is not None else ''
+    filtered = control_df.filter(
+        (pl.col('fuente') == fuente)
+        & (pl.col('modulo') == modulo)
+        & (pl.col('dataset') == dataset)
+        & (pl.col('scope_tipo') == scope_tipo)
+        & (pl.col('scope_valor') == scope_valor)
+        & (pl.col('producto_codigo') == producto_codigo)
+        & (pl.col('mercado_codigo').fill_null('') == mc)
+    )
+    if filtered.is_empty():
+        return None
+
+    latest = filtered.sort('fecha_actualizacion').tail(1).to_dicts()
+    return latest[0] if latest else None
 
 
 def upsert_control_records(records_df: pl.DataFrame) -> str:
@@ -327,6 +449,8 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
                     table_uri,
                     merged_remote_state.to_arrow(),
                     mode='overwrite',
+                    schema_mode='merge',
+                    engine='rust',
                     storage_options=storage_options,
                 )
             _write_pending_control_state(pl.DataFrame())
@@ -355,51 +479,66 @@ def sync_pending_control_state() -> dict[str, object]:
 
 
 def append_control_events(events_df: pl.DataFrame) -> str:
-    with _control_guard():
-        if events_df.is_empty():
-            return ''
+    lock_start = time.monotonic()
+    try:
+        with _control_guard():
+            lock_acquired = time.monotonic()
+            lock_wait = lock_acquired - lock_start
+            if lock_wait > 1.0:  # Log if lock took >1 second to acquire
+                logger.debug(f'Control lock acquired after {lock_wait:.2f}s')
+            
+            if events_df.is_empty():
+                return ''
 
-        settings = get_settings()
-        events_uri = _control_events_uri()
-        incoming_events = _normalize_control_frame(events_df)
-        local_events = _read_local_control_events()
-        pending_events = _read_pending_control_events()
-        merged_local_events = _append_event_frames(local_events, incoming_events)
-        if not merged_local_events.is_empty():
-            _write_local_control_events(merged_local_events)
+            settings = get_settings()
+            events_uri = _control_events_uri()
+            incoming_events = _normalize_control_frame(events_df)
+            local_events = _read_local_control_events()
+            pending_events = _read_pending_control_events()
+            merged_local_events = _append_event_frames(local_events, incoming_events)
+            if not merged_local_events.is_empty():
+                _write_local_control_events(merged_local_events)
 
-        if not settings.is_minio:
-            if not incoming_events.is_empty():
-                Path(events_uri).mkdir(parents=True, exist_ok=True)
+            if not settings.is_minio:
+                if not incoming_events.is_empty():
+                    Path(events_uri).mkdir(parents=True, exist_ok=True)
+                    with get_delta_lock():
+                        _, write_deltalake = get_delta_runtime()
+                        write_deltalake(
+                            events_uri,
+                            incoming_events.to_arrow(),
+                            mode='append',
+                            schema_mode='merge',
+                            engine='rust',
+                            storage_options=settings.delta_storage_options,
+                        )
+                _write_pending_control_events(pl.DataFrame())
+                return events_uri
+
+            events_to_sync = _append_event_frames(pending_events, incoming_events)
+            if events_to_sync.is_empty():
+                return events_uri
+
+            try:
                 with get_delta_lock():
                     _, write_deltalake = get_delta_runtime()
                     write_deltalake(
                         events_uri,
-                        incoming_events.to_arrow(),
+                        events_to_sync.to_arrow(),
                         mode='append',
+                        schema_mode='merge',
+                        engine='rust',
                         storage_options=settings.delta_storage_options,
                     )
-            _write_pending_control_events(pl.DataFrame())
-            return events_uri
-
-        events_to_sync = _append_event_frames(pending_events, incoming_events)
-        if events_to_sync.is_empty():
-            return events_uri
-
-        try:
-            with get_delta_lock():
-                _, write_deltalake = get_delta_runtime()
-                write_deltalake(
-                    events_uri,
-                    events_to_sync.to_arrow(),
-                    mode='append',
-                    storage_options=settings.delta_storage_options,
-                )
-            _write_pending_control_events(pl.DataFrame())
-            return events_uri
-        except Exception:
-            logger.exception('No se pudo sincronizar el journal de eventos de control con MinIO; se conserva en cache local.')
-            _write_pending_control_events(events_to_sync)
+                _write_pending_control_events(pl.DataFrame())
+                return events_uri
+            except Exception:
+                logger.exception('No se pudo sincronizar el journal de eventos de control con MinIO; se conserva en cache local.')
+                _write_pending_control_events(events_to_sync)
+    finally:
+        total_time = time.monotonic() - lock_start
+        if total_time > 5.0:  # Log if entire operation took >5 seconds
+            logger.debug(f'Control events write operation took {total_time:.2f}s total')
             return str(_pending_control_events_path())
 
 
@@ -442,4 +581,3 @@ def build_control_record_timestamp() -> datetime:
 
 def build_control_event_id() -> str:
     return uuid4().hex
-

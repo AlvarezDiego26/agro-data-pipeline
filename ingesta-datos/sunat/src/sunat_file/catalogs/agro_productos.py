@@ -1,4 +1,4 @@
-﻿PRODUCTOS_AGRO_CATALOGO = [
+PRODUCTOS_AGRO_CATALOGO = [
     {"producto_id": "1018", "producto_nombre": "Aceituna botija", "categoria": "fruta", "aliases": ["aceituna botija", "aceituna", "aceitunas"]},
     {"producto_id": "0202", "producto_nombre": "Aji fresco", "categoria": "hortaliza", "aliases": ["aji fresco", "aji"]},
     {"producto_id": "0203", "producto_nombre": "Aji seco", "categoria": "hortaliza", "aliases": ["aji seco"]},
@@ -138,4 +138,8 @@ EXCLUSION_KEYWORDS = [
     "hibrida",
     "planta",
     "in vitro",
+    "enlatado",
+    "enlatados",
+    "pasta",
+    "salsa",
 ]

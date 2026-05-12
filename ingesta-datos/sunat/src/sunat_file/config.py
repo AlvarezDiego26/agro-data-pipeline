@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     sunat_modo_carga: str = 'incremental'
     sunat_incremental_overlap_dias: int = 0
     sunat_use_control_table: bool = True
-    sunat_control_dataset: str = 'control/ingesta_control'
-    sunat_control_events_dataset: str = 'control/ingesta_control_eventos'
+    sunat_control_dataset: str = 'control/control_state.parquet'
+    sunat_control_events_dataset: str = 'control/control_events_local.parquet'
     sunat_inbox_dir: Path = Path('data/inbox/sunat')
     sunat_processed_dir: Path = Path('data/processed/sunat')
     sunat_error_dir: Path = Path('data/error/sunat')
@@ -49,6 +49,26 @@ class Settings(BaseSettings):
         return self.data_dir / 'clean'
 
     @property
+    def landing_dir(self) -> Path:
+        return self.base_dir / 'Landing'
+
+    @property
+    def sunat_landing_dir(self) -> Path:
+        return self.landing_dir / 'sunat'
+
+    @property
+    def sunat_control_dir(self) -> Path:
+        return self.sunat_landing_dir / 'control'
+
+    @property
+    def extraccion_dir(self) -> Path:
+        return self.sunat_landing_dir / 'extraccion'
+
+    @property
+    def consolidacion_agricola_dir(self) -> Path:
+        return self.sunat_landing_dir / 'consolidacion_agricola'
+
+    @property
     def clean_delta_dir(self) -> Path:
         return self.data_dir / 'clean_delta'
 
@@ -62,7 +82,7 @@ class Settings(BaseSettings):
 
     @property
     def control_dir(self) -> Path:
-        return self.data_dir / 'control'
+        return self.sunat_control_dir
 
     @property
     def control_local_state_path(self) -> Path:
@@ -98,6 +118,14 @@ class Settings(BaseSettings):
         }
 
     def build_delta_uri(self, dataset_name: str) -> str:
+        if dataset_name.startswith('control/'):
+            # For control, return file URI
+            if self.is_minio:
+                prefix = self.minio_prefix.strip('/')
+                if prefix:
+                    return f's3://{self.minio_bucket}/{prefix}/{dataset_name}'
+                return f's3://{self.minio_bucket}/{dataset_name}'
+            return str(self.base_dir / dataset_name)
         if self.is_minio:
             prefix = self.minio_prefix.strip('/')
             if prefix:
@@ -139,6 +167,8 @@ def get_settings() -> Settings:
     settings.raw_dir.mkdir(parents=True, exist_ok=True)
     settings.clean_dir.mkdir(parents=True, exist_ok=True)
     settings.control_dir.mkdir(parents=True, exist_ok=True)
+    settings.extraccion_dir.mkdir(parents=True, exist_ok=True)
+    settings.consolidacion_agricola_dir.mkdir(parents=True, exist_ok=True)
     if not settings.is_minio:
         settings.clean_delta_dir.mkdir(parents=True, exist_ok=True)
     return settings

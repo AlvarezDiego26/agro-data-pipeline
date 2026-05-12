@@ -7,8 +7,10 @@ from pydantic import BaseModel
 class ModuloSisap(str, Enum):
     MAYORISTA_VOLUMEN = "mayorista_volumen"
     MAYORISTA_PRECIOS = "mayorista_precios"
-    CIUDADES_PRECIOS_MAYORISTAS = "ciudades_precios_mayoristas"
-    CIUDADES_PRECIOS_MINORISTAS = "ciudades_precios_minoristas"
+
+    # Ambos módulos de ciudades escriben al mismo tablón Delta consolidado.
+    CIUDADES_PRECIOS_MAYORISTAS = "precio_diario_regiones"
+    CIUDADES_PRECIOS_MINORISTAS = "precio_diario_regiones"
 
 
 class ProductoAgricola(BaseModel):
@@ -51,4 +53,3 @@ class HtmlSnapshot(BaseModel):
     nombre_archivo: str
     url: str
     query_hash: str
-

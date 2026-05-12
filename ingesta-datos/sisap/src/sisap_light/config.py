@@ -6,6 +6,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
+from sisap_light.ingesta_datos.catalogos.mercados import MERCADOS_SISAP
 
 
 class Settings(BaseSettings):
@@ -31,14 +32,15 @@ class Settings(BaseSettings):
     sisap_modo_carga: str = 'incremental'
     sisap_incremental_overlap_dias: int = 0
     sisap_use_control_table: bool = True
-    sisap_control_dataset: str = 'control/ingesta_control'
-    sisap_control_events_dataset: str = 'control/ingesta_control_eventos'
+    sisap_control_dataset: str = 'ingesta_control'
+    sisap_control_events_dataset: str = 'ingesta_control_eventos'
     sisap_procedencia_codigo: str | None = None
     sisap_procedencia_nombre: str | None = None
+    sisap_mercado_codigo: str | None = None
+    sisap_mercado_nombre: str | None = None
+    sisap_mercados: str = 'all'
     sisap_region_codigo: str | None = None
     sisap_region_nombre: str | None = None
-    sisap_mercado_codigo: str = '15011501'
-    sisap_mercado_nombre: str = 'Lima Metropolitana'
     sisap_producto_codigo: str | None = None
     sisap_producto_nombre: str | None = None
     sisap_max_productos: int | None = None
@@ -155,6 +157,10 @@ class Settings(BaseSettings):
         ]
 
     @staticmethod
+    def _all_mercados() -> list[str]:
+        return [item['nombre'] for item in MERCADOS_SISAP]
+
+    @staticmethod
     def _is_all_keyword(values: list[str]) -> bool:
         normalized = {value.strip().lower() for value in values}
         return bool(normalized) and normalized <= {'all', '*', 'todas', 'todos'}
@@ -193,6 +199,15 @@ class Settings(BaseSettings):
         values = self._split_csv(self.sisap_regiones)
         if not values or self._is_all_keyword(values):
             values = self._all_scopes()
+        if self.sisap_max_scopes is not None and self.sisap_max_scopes > 0:
+            return values[: self.sisap_max_scopes]
+        return values
+
+    @property
+    def mercados_resueltos(self) -> list[str]:
+        values = self._split_csv(self.sisap_mercados)
+        if not values or self._is_all_keyword(values):
+            values = self._all_mercados()
         if self.sisap_max_scopes is not None and self.sisap_max_scopes > 0:
             return values[: self.sisap_max_scopes]
         return values

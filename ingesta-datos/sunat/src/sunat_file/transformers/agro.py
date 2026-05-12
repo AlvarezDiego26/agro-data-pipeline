@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import unicodedata
@@ -170,13 +170,11 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
 
         product_match = _match_product(search_text)
         producto_id = str(product_match["producto_id"]) if product_match and product_match["producto_id"] is not None else None
-        if not chapter in AGRO_HS_CHAPTERS:
+        if chapter not in AGRO_HS_CHAPTERS:
             continue
         if product_match is None:
             continue
-        if not _is_fresh_subpartida(part_nandi):
-            continue
-        if not _looks_fresh(search_text):
+        if not _is_fresh_subpartida(part_nandi) and not _looks_fresh(search_text):
             continue
         if not _subpartida_matches_product(producto_id, part_nandi):
             continue
@@ -221,6 +219,7 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
                 "nombre_productor": row.get("dnompro"),
                 "archivo_origen": row.get("archivo_origen"),
                 "archivo_miembro": row.get("archivo_miembro"),
+                "registro_hash_fuente": row.get("registro_hash_fuente"),
                 "fuente": FUENTE,
                 "dataset": DATASET,
                 "fecha_extraccion": extraction_ts,
@@ -249,7 +248,7 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
         "cantidad_fisica", "unidad_fisica", "nombre_exportador", "precio_fob_usd_por_kg", "ubigeo",
         "region_codigo", "region_nombre", "provincia_codigo", "distrito_codigo", "peso_bruto_kg",
         "cantidad_comercial", "unidad_comercial", "nombre_productor", "archivo_origen", "archivo_miembro",
-        "fuente", "dataset", "fecha_extraccion", "version",
+        "registro_hash_fuente", "fuente", "dataset", "fecha_extraccion", "version",
     ]
     return result.select([c for c in ordered_cols if c in result.columns])
 
@@ -390,6 +389,4 @@ def build_data_dictionary(review_dir: Path) -> Path:
     return dict_path
 
 
-# Alias temporal para no romper imports heredados mientras se estabiliza el proyecto.
 build_sunat_exportaciones_agrarias = build_sunat_exportaciones_frescas
-

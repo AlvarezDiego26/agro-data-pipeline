@@ -124,6 +124,56 @@ python -m agro_orquestacion.flows agro
 python -m agro_orquestacion.serve
 ```
 
+## Prefect Server En Docker
+Levantar el stack self-hosted de `Prefect` con:
+- `PostgreSQL`
+- `Redis`
+- `prefect-server`
+- `prefect-services`
+- `prefect-worker`
+
+desde esta carpeta:
+
+```powershell
+docker compose up -d
+```
+
+Verificar contenedores:
+
+```powershell
+docker compose ps
+```
+
+Ver logs si algo falla:
+
+```powershell
+docker compose logs -f
+```
+
+Configurar tu cliente local para apuntar al server:
+
+```powershell
+prefect config set PREFECT_API_URL="http://127.0.0.1:4200/api"
+```
+
+Abrir el dashboard:
+
+```powershell
+prefect dashboard open
+```
+
+Apagar el stack:
+
+```powershell
+docker compose down
+```
+
+Si tambien quieres eliminar el volumen de PostgreSQL:
+
+```powershell
+docker compose down -v
+```
+
 ## Publicacion En Prefect Cloud
 Con la sesion de `Prefect Cloud` ya autenticada:
 

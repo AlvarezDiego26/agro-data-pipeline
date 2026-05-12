@@ -16,6 +16,18 @@ class SisapMayoristaExtractor:
     def fetch_home(self) -> str:
         return self.client.get(self.base_url)
 
+    def fetch_productos_por_mercado_html(self, mercado_codigo: str) -> str:
+        """HTML con los checkboxes de productos vigentes para el mercado (filtrarPorMercado)."""
+        home_html = self.fetch_home()
+        hidden = extract_hidden_inputs(home_html)
+        post_id = extract_post_id(home_html) or hidden.get('postID', '')
+        payload = {
+            'mercado': mercado_codigo,
+            '__ajax_carga_final': hidden.get('__ajax_carga_final', 'consulta'),
+            'postID': post_id,
+        }
+        return self.client.post(self.settings.sisap_generos_url, data=payload)
+
     def build_payload(self, query: SisapQuery, home_html: str, variable: str = "volumen") -> dict[str, str]:
         hidden = extract_hidden_inputs(home_html)
         post_id = extract_post_id(home_html) or hidden.get("postID", "")

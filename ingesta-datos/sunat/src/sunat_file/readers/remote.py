@@ -72,7 +72,7 @@ def fetch_remote_listing() -> list[SunatRemoteFile]:
 
     matches: dict[str, SunatRemoteFile] = {}
     for href_match in HREF_PATTERN.finditer(html):
-        href = href_match.group('href').strip()
+        href = href_match.group('href').strip().replace('\\', '/')
         file_match = REMOTE_FILE_PATTERN.search(href)
         if not file_match:
             continue

@@ -1,13 +1,15 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
 import re
+from datetime import date
 
 import polars as pl
 from loguru import logger
 
 from sunat_file.config import get_settings
 from sunat_file.jobs.scanner import scan_inbox
+from sunat_file.limpieza.reglas import validate_non_empty
 from sunat_file.readers.files import extract_supported_zip_members, read_supported_file
 from sunat_file.readers.remote import download_remote_file, fetch_remote_listing
 from sunat_file.storage.control import (
@@ -18,7 +20,8 @@ from sunat_file.storage.control import (
     upsert_control_records,
 )
 from sunat_file.storage.delta import save_delta_table
-from sunat_file.storage.parquet import save_raw_parquet
+from sunat_file.storage.merge import deduplicate_dataset, normalize_dataset
+from sunat_file.storage.parquet import save_partitioned_parquet, save_raw_parquet
 from sunat_file.transformers.base import normalize_columns
 
 ZIP_CONSOLIDATED_DATASET = 'sunat_exportaciones_base'
@@ -171,30 +174,33 @@ def _with_lineage(raw_df: pl.DataFrame, source_file, member_file=None) -> pl.Dat
 
 def _persist_base_dataset(df: pl.DataFrame) -> None:
     raw_df = normalize_columns(df)
-    save_raw_parquet(raw_df, ZIP_CONSOLIDATED_DATASET)
+    validate_non_empty(raw_df, ZIP_CONSOLIDATED_DATASET)
+    raw_df = normalize_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
+    raw_df = deduplicate_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
+    raw_df = raw_df.with_columns(
+        pl.col('archivo_anio_publicacion').cast(pl.Int32).alias('anio'),
+        pl.col('archivo_mes_publicacion').cast(pl.Utf8).alias('mes'),
+    )
+
+    fecha_extraccion = date.today().isoformat()
     settings = get_settings()
-    clean_path = settings.clean_dir / f'{ZIP_CONSOLIDATED_DATASET}.parquet'
-    merged_df = raw_df
-    if clean_path.exists():
-        existing_df = pl.read_parquet(clean_path)
-        merged_df = pl.concat([existing_df, raw_df], how='diagonal_relaxed').unique(
-            subset=['registro_hash_fuente'] if 'registro_hash_fuente' in raw_df.columns else None
-        )
-    merged_df.write_parquet(clean_path)
+    base_dir = settings.extraccion_dir / f'fecha_extraccion={fecha_extraccion}' / ZIP_CONSOLIDATED_DATASET
+    save_partitioned_parquet(raw_df, ZIP_CONSOLIDATED_DATASET, base_dir, ['anio', 'mes'])
+
     if settings.sunat_delta_enabled:
         save_delta_table(
             raw_df,
-            ZIP_CONSOLIDATED_DATASET,
-            ['archivo_anio_publicacion', 'archivo_mes_publicacion'],
+            f'extraccion/fecha_extraccion={fecha_extraccion}/{ZIP_CONSOLIDATED_DATASET}',
+            ['anio', 'mes'],
         )
 
 
 def _persist_source_dataset(frames: list[pl.DataFrame]) -> list[str]:
     if not frames:
         return []
-    merged_source_df = pl.concat(frames, how='diagonal_relaxed').unique(
-        subset=['registro_hash_fuente'] if 'registro_hash_fuente' in frames[0].columns else None
-    )
+    merged_source_df = pl.concat(frames, how='diagonal_relaxed')
+    merged_source_df = normalize_dataset(merged_source_df, ZIP_CONSOLIDATED_DATASET)
+    merged_source_df = deduplicate_dataset(merged_source_df, ZIP_CONSOLIDATED_DATASET)
     _persist_base_dataset(merged_source_df)
     return [ZIP_CONSOLIDATED_DATASET]
 

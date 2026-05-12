@@ -192,10 +192,8 @@ def read_control_table() -> pl.DataFrame:
         pending_state = _read_pending_control_state()
 
         try:
-            from deltalake import DeltaTable
-
-            table = DeltaTable(table_uri, storage_options=storage_options)
-            remote_state = _normalize_control_frame(pl.from_arrow(table.to_pyarrow_table()))
+            remote_state = pl.read_parquet(table_uri, storage_options=storage_options)
+            remote_state = _normalize_control_frame(remote_state)
             merged_state = _merge_control_frames(remote_state, local_state, pending_state)
             if not merged_state.is_empty():
                 _write_local_control_state(merged_state)
@@ -262,39 +260,14 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
             _write_local_control_state(merged_local_state)
 
         if not settings.is_minio:
-            if not merged_local_state.is_empty():
-                Path(table_uri).mkdir(parents=True, exist_ok=True)
-                from deltalake.writer import write_deltalake
-
-                write_deltalake(
-                    table_uri,
-                    merged_local_state.to_arrow(),
-                    mode='overwrite',
-                    storage_options=storage_options,
-                )
+            merged_local_state.write_parquet(table_uri)
             _write_pending_control_state(pl.DataFrame())
             return table_uri
 
         try:
-            from deltalake import DeltaTable
-
-            existing_table = DeltaTable(table_uri, storage_options=storage_options)
-            remote_state = _normalize_control_frame(pl.from_arrow(existing_table.to_pyarrow_table()))
-        except Exception:
-            remote_state = pl.DataFrame()
-
-        merged_remote_state = _merge_control_frames(remote_state, pending_state, incoming_df)
-        try:
-            from deltalake.writer import write_deltalake
-
-            write_deltalake(
-                table_uri,
-                merged_remote_state.to_arrow(),
-                mode='overwrite',
-                storage_options=storage_options,
-            )
+            merged_local_state.write_parquet(table_uri, storage_options=storage_options)
             _write_pending_control_state(pl.DataFrame())
-            _write_local_control_state(merged_remote_state)
+            _write_local_control_state(merged_local_state)
             return table_uri
         except Exception:
             logger.exception('No se pudo sincronizar control SUNAT con MinIO; se conserva en cache local.')
@@ -326,6 +299,7 @@ def append_control_events(events_df: pl.DataFrame) -> str:
 
         settings = get_settings()
         events_uri = _control_events_uri()
+        storage_options = settings.delta_storage_options
         incoming_events = _normalize_control_frame(events_df)
         local_events = _read_local_control_events()
         pending_events = _read_pending_control_events()
@@ -334,37 +308,32 @@ def append_control_events(events_df: pl.DataFrame) -> str:
             _write_local_control_events(merged_local_events)
 
         if not settings.is_minio:
-            if not incoming_events.is_empty():
-                Path(events_uri).mkdir(parents=True, exist_ok=True)
-                from deltalake.writer import write_deltalake
-
-                write_deltalake(
-                    events_uri,
-                    incoming_events.to_arrow(),
-                    mode='append',
-                    storage_options=settings.delta_storage_options,
-                )
+            try:
+                existing_events = pl.read_parquet(events_uri)
+                existing_events = _normalize_control_frame(existing_events)
+            except Exception:
+                existing_events = pl.DataFrame()
+            all_events = _append_event_frames(existing_events, pending_events, incoming_events)
+            if not all_events.is_empty():
+                all_events.write_parquet(events_uri)
             _write_pending_control_events(pl.DataFrame())
             return events_uri
 
-        events_to_sync = _append_event_frames(pending_events, incoming_events)
-        if events_to_sync.is_empty():
-            return events_uri
-
         try:
-            from deltalake.writer import write_deltalake
-
-            write_deltalake(
-                events_uri,
-                events_to_sync.to_arrow(),
-                mode='append',
-                storage_options=settings.delta_storage_options,
-            )
+            try:
+                existing_events = pl.read_parquet(events_uri, storage_options=storage_options)
+                existing_events = _normalize_control_frame(existing_events)
+            except Exception:
+                existing_events = pl.DataFrame()
+            events_to_sync = _append_event_frames(existing_events, pending_events, incoming_events)
+            if not events_to_sync.is_empty():
+                events_to_sync.write_parquet(events_uri, storage_options=storage_options)
             _write_pending_control_events(pl.DataFrame())
             return events_uri
         except Exception:
             logger.exception('No se pudo sincronizar el journal de eventos SUNAT con MinIO; se conserva en cache local.')
-            _write_pending_control_events(events_to_sync)
+            events_to_pending = _append_event_frames(pending_events, incoming_events)
+            _write_pending_control_events(events_to_pending)
             return str(_pending_control_events_path())
 
 

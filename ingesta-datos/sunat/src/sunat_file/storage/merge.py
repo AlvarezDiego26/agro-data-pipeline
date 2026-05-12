@@ -1,35 +1,20 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import polars as pl
 
 DATASET_BUSINESS_KEYS = {
-    "precios_diarios_mercado_lima": [
-        "fecha",
-        "mercado_codigo",
-        "producto_codigo",
-        "variedad",
-        "procedencia",
-    ],
-    "volumen_diario_mercado_lima": [
-        "fecha",
-        "mercado_codigo",
-        "producto_codigo",
-        "variedad",
-        "procedencia",
-    ],
-    "precio_diario_regiones": [
-        "fecha",
-        "tipo_mercado",
-        "region",
-        "ciudad",
-        "producto_codigo",
-        "variedad",
-    ],
+    "sunat_exportaciones_base": ["registro_hash_fuente"],
+    "sunat_exportaciones_agrarias_frescas": ["registro_hash_fuente"],
 }
 
 
 def dataset_root_name(dataset_name: str) -> str:
-    return dataset_name.split("/", 1)[0]
+    normalized = dataset_name.split("/", 1)[0]
+    if normalized.endswith(".parquet"):
+        normalized = normalized[: -len(".parquet")]
+    if normalized.endswith("_raw"):
+        normalized = normalized[: -len("_raw")]
+    return normalized
 
 
 def configured_business_keys(dataset_name: str) -> list[str]:
@@ -49,8 +34,7 @@ def validate_business_keys(df: pl.DataFrame, dataset_name: str) -> None:
     missing_columns = [column for column in configured if column not in df.columns]
     if missing_columns:
         raise ValueError(
-            f"El dataset '{dataset_name}' no contiene las llaves de negocio esperadas: "
-            f"{missing_columns}"
+            f"El dataset '{dataset_name}' no contiene las llaves de negocio esperadas: {missing_columns}"
         )
 
     null_key_columns: list[str] = []
@@ -82,8 +66,7 @@ def validate_business_keys(df: pl.DataFrame, dataset_name: str) -> None:
         if empty_key_columns:
             details.append(f"vacias={empty_key_columns}")
         raise ValueError(
-            f"El dataset '{dataset_name}' contiene llaves de negocio invalidas: "
-            f"{', '.join(details)}"
+            f"El dataset '{dataset_name}' contiene llaves de negocio invalidas: {', '.join(details)}"
         )
 
 
@@ -91,34 +74,29 @@ def normalize_dataset(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
     if df.is_empty():
         return df
 
-    # Eliminar metadata de consultas para no ensuciar el Data Lake
-    cols_to_drop = [
-        "fecha_inicio_consulta",
-        "fecha_fin_consulta",
-        "procedencia_filtro_codigo",
-        "procedencia_filtro_nombre",
-    ]
-    df = df.drop([c for c in cols_to_drop if c in df.columns], strict=False)
-
     business_keys = set(configured_business_keys(dataset_name))
     expressions: list[pl.Expr] = []
 
     for column, dtype in df.schema.items():
         if column in business_keys:
-            if column == "variedad" and dtype in (pl.Utf8, pl.String, pl.Categorical):
-                expressions.append(
-                    pl.when(
-                        pl.col(column).is_null()
-                        | pl.col(column).cast(pl.Utf8, strict=False).str.strip_chars().eq("")
-                    )
-                    .then(pl.lit("sin_variedad"))
-                    .otherwise(pl.col(column).cast(pl.Utf8, strict=False).str.strip_chars())
-                    .alias(column)
-                )
             continue
 
         if dtype in (pl.Utf8, pl.String, pl.Categorical):
-            expressions.append(pl.col(column).cast(pl.Utf8, strict=False).fill_null("").str.strip_chars())
+            expressions.append(pl.col(column).cast(pl.Utf8, strict=False).fill_null(""))
+        elif dtype in (
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+            pl.Float32,
+            pl.Float64,
+        ):
+            expressions.append(pl.col(column).fill_null(0))
+
     if not expressions:
         return df
     return df.with_columns(expressions)
@@ -151,9 +129,8 @@ def deduplicate_dataset(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
             .to_dicts()
         )
         raise ValueError(
-            f"Fallo rapido de ingesta: se detectaron registros conflictivos para las "
-            f"llaves de negocio {business_keys} en el dataset '{dataset_name}'. "
-            f"Muestra de conflictos: {sample_conflicts}"
+            f"Fallo rapido de ingesta: se detectaron registros conflictivos para las llaves de negocio {business_keys} "
+            f"en el dataset '{dataset_name}'. Muestra de conflictos: {sample_conflicts}"
         )
 
     return unique_df

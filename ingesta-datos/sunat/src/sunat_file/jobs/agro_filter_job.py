@@ -26,19 +26,21 @@ from sunat_file.transformers.agro import (
     build_ubigeo_quality_report,
 )
 
-SOURCE_DATASET = 'sunat_exportaciones_base.parquet'
+SOURCE_DATASET = 'sunat_exportaciones_base'
 OUTPUT_DATASET = 'sunat_exportaciones_agrarias_frescas'
 OUTPUT_FILE = f'{OUTPUT_DATASET}.parquet'
 
 
 def _source_path() -> Path:
+    fecha_extraccion = date.today().isoformat()
     settings = get_settings()
-    return settings.clean_dir / SOURCE_DATASET
+    return settings.extraccion_dir / f'fecha_extraccion={fecha_extraccion}' / SOURCE_DATASET
 
 
 def _clean_path() -> Path:
+    fecha_consolidacion = date.today().isoformat()
     settings = get_settings()
-    return settings.clean_dir / OUTPUT_FILE
+    return settings.consolidacion_agricola_dir / f'fecha_consolidacion={fecha_consolidacion}' / OUTPUT_FILE
 
 
 def _get_last_clean_date(path: Path) -> date | None:
@@ -148,6 +150,7 @@ def run_filter_agro() -> dict[str, str | int]:
     source_path = _source_path()
     resolved_dates = _resolve_processing_dates()
     clean_path = _clean_path()
+    fecha_consolidacion = date.today().isoformat()
     if not source_path.exists():
         if resolved_dates is not None:
             fecha_inicio, fecha_fin = resolved_dates
@@ -184,7 +187,7 @@ def run_filter_agro() -> dict[str, str | int]:
 
     fecha_inicio, fecha_fin = resolved_dates
     try:
-        source_df = pl.read_parquet(source_path)
+        source_df = pl.scan_parquet(source_path / '**/*.parquet').collect()
         fresh_df = build_sunat_exportaciones_frescas(source_df)
         if fresh_df.is_empty():
             _persist_control(fecha_inicio, fecha_fin, None, 'no_data', 'sin_registros_frescos_en_base')
@@ -231,9 +234,9 @@ def run_filter_agro() -> dict[str, str | int]:
 
         save_parquet(merged_df, clean_path)
         if settings.sunat_delta_enabled:
-            save_delta_table(window_df, OUTPUT_DATASET, ['anio', 'mes'])
+            save_delta_table(window_df, f'consolidacion_agricola/fecha_consolidacion={fecha_consolidacion}/{OUTPUT_DATASET}', ['anio', 'mes'])
 
-        review_dir = settings.data_dir / 'review'
+        review_dir = settings.consolidacion_agricola_dir / f'fecha_consolidacion={fecha_consolidacion}'
         preview_path, resumen_path, resumen_subpartidas_path = build_review_files(merged_df, review_dir)
         catalog_path = build_catalog_file(merged_df, review_dir)
         territory_path = build_territory_catalog(merged_df, review_dir)

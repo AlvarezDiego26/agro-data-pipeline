@@ -37,55 +37,33 @@ CITY_VARIABLES = {
 
 EXPECTED_COLUMNS_MAY = [
     'fecha',
+    'tipo_mercado',
+    'region',
+    'ciudad',
     'producto_codigo',
     'producto_nombre',
-    'ciudad',
     'variedad',
     'unidad_medida',
     'equiv_kg_lt',
-    'precio_may_min',
-    'precio_may_prom',
-    'precio_may_max',
+    'precio_min',
+    'precio_prom',
+    'precio_max',
 ]
 EXPECTED_COLUMNS_MIN = [
     'fecha',
+    'tipo_mercado',
+    'region',
+    'ciudad',
     'producto_codigo',
     'producto_nombre',
-    'ciudad',
     'variedad',
     'unidad_medida',
     'equiv_kg_lt',
-    'precio_min_min',
-    'precio_min_prom',
-    'precio_min_max',
+    'precio_min',
+    'precio_prom',
+    'precio_max',
 ]
 MAX_SAMPLE_QUERIES = 12
-NUMERIC_CITY_COLUMNS = {
-    'equiv_kg_lt': pl.Float64,
-    'precio_may_min': pl.Float64,
-    'precio_may_prom': pl.Float64,
-    'precio_may_max': pl.Float64,
-    'precio_min_min': pl.Float64,
-    'precio_min_prom': pl.Float64,
-    'precio_min_max': pl.Float64,
-}
-
-
-def _with_expected_columns(df: pl.DataFrame, expected_columns: list[str], dataset_label: str) -> pl.DataFrame:
-    missing_columns = [column for column in expected_columns if column not in df.columns]
-    if missing_columns:
-        logger.warning(
-            '{} llego sin columnas {}. Se completaran con nulos para mantener el esquema.',
-            dataset_label,
-            missing_columns,
-        )
-        df = df.with_columns(
-            [
-                pl.lit(None, dtype=NUMERIC_CITY_COLUMNS.get(column)).alias(column)
-                for column in missing_columns
-            ]
-        )
-    return df
 
 
 def _resolve_region(region_nombre: str | None = None) -> dict:
@@ -158,7 +136,11 @@ def _variables(modulo: ModuloSisap) -> list[str]:
 
 
 def _output_name(modulo: ModuloSisap) -> str:
-    return 'ciudades_precios_mayoristas' if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS else 'ciudades_precios_minoristas'
+    return 'precio_diario_regiones'
+
+
+def _tipo_mercado(modulo: ModuloSisap) -> str:
+    return 'mayorista' if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS else 'minorista'
 
 
 def _fetch_city_frames(extractor: SisapCiudadesExtractor, query: SisapQuery, modulo: ModuloSisap, save_raw: bool = False) -> pl.DataFrame:
@@ -169,7 +151,56 @@ def _fetch_city_frames(extractor: SisapCiudadesExtractor, query: SisapQuery, mod
             save_html_snapshot(modulo, query, report_html, suffix=variable)
         frame = build_ciudades_metric_frame(report_html, query=query, metric_name=variable)
         metric_frames.append(frame)
-    return merge_ciudades_metrics(metric_frames)
+    df = merge_ciudades_metrics(metric_frames)
+    if df.is_empty():
+        return df
+
+    tipo_mercado = _tipo_mercado(modulo)
+    missing_metric_exprs: list[pl.Expr] = []
+    if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS:
+        for column in ['precio_may_min', 'precio_may_prom', 'precio_may_max']:
+            if column not in df.columns:
+                missing_metric_exprs.append(pl.lit(None, dtype=pl.Float64).alias(column))
+    else:
+        for column in ['precio_min_min', 'precio_min_prom', 'precio_min_max']:
+            if column not in df.columns:
+                missing_metric_exprs.append(pl.lit(None, dtype=pl.Float64).alias(column))
+
+    if missing_metric_exprs:
+        df = df.with_columns(missing_metric_exprs)
+
+    selected_columns: list[pl.Expr | str] = [
+        'fecha',
+        'ciudad',
+        'producto_codigo',
+        'producto_nombre',
+        'variedad',
+        'unidad_medida',
+        'equiv_kg_lt',
+        pl.col('region_nombre').alias('region'),
+        pl.lit(tipo_mercado).alias('tipo_mercado'),
+    ]
+    if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS:
+        selected_columns.extend(['precio_may_min', 'precio_may_prom', 'precio_may_max'])
+    else:
+        selected_columns.extend(['precio_min_min', 'precio_min_prom', 'precio_min_max'])
+
+    df = df.select(selected_columns)
+
+    if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS:
+        df = df.with_columns(
+            pl.col('precio_may_min').alias('precio_min'),
+            pl.col('precio_may_prom').alias('precio_prom'),
+            pl.col('precio_may_max').alias('precio_max'),
+        ).drop(['precio_may_min', 'precio_may_prom', 'precio_may_max'])
+    else:
+        df = df.with_columns(
+            pl.col('precio_min_min').alias('precio_min'),
+            pl.col('precio_min_prom').alias('precio_prom'),
+            pl.col('precio_min_max').alias('precio_max'),
+        ).drop(['precio_min_min', 'precio_min_prom', 'precio_min_max'])
+
+    return df
 
 
 def _find_first_non_empty_report(extractor: SisapCiudadesExtractor, plan: list[SisapQuery], modulo: ModuloSisap) -> tuple[SisapQuery, pl.DataFrame]:
@@ -188,7 +219,6 @@ def run_sample(modulo: ModuloSisap) -> Path:
     extractor = SisapCiudadesExtractor()
     _, df = _find_first_non_empty_report(extractor, plan, modulo)
     output_name = _output_name(modulo)
-    df = _with_expected_columns(df, _expected_columns(modulo), output_name)
     validate_non_empty(df, output_name)
     validate_expected_columns(df, _expected_columns(modulo), output_name)
     output = get_settings().clean_dir / f'{output_name}_sample.parquet'
@@ -220,7 +250,6 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         extractor = SisapCiudadesExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
-        control_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
                 'Procesando {} shard={} {}/{} producto={} codigo={}',
@@ -244,24 +273,19 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                         query,
                         estado='empty',
                     )
-                    control_event_rows.append(
-                        build_control_event_row(
-                            output_name,
-                            output_name,
-                            'region',
-                            region['nombre'],
-                            query,
-                            'empty',
-                            'sin_resultados',
-                        )
+                    event_row = build_control_event_row(
+                        output_name,
+                        output_name,
+                        'region',
+                        region['nombre'],
+                        query,
+                        'empty',
+                        'sin_resultados',
                     )
+                    persist_control_events_batch([event_row])
+                    persist_control_states(control_states)
                     shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
                     continue
-                df = _with_expected_columns(
-                    df,
-                    _expected_columns(modulo),
-                    f'{output_name}_{query.producto_codigo}',
-                )
                 validate_expected_columns(df, _expected_columns(modulo), f'{output_name}_{query.producto_codigo}')
                 append_partitioned_output(
                     frames=[df],
@@ -272,34 +296,31 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                     scope_value=region['nombre'],
                 )
                 register_control_success(control_states, output_name, output_name, 'region', region['nombre'], query)
-                control_event_rows.append(
-                    build_control_event_row(
-                        output_name,
-                        output_name,
-                        'region',
-                        region['nombre'],
-                        query,
-                        'success',
-                    )
+                event_row = build_control_event_row(
+                    output_name,
+                    output_name,
+                    'region',
+                    region['nombre'],
+                    query,
+                    'success',
                 )
+                persist_control_events_batch([event_row])
+                persist_control_states(control_states)
             except Exception as exc:
                 logger.exception('Fallo extrayendo {} para {} ({})', output_name, query.producto_nombre, query.producto_codigo)
                 register_control_failure(control_states, output_name, output_name, 'region', region['nombre'], query, str(exc))
-                control_event_rows.append(
-                    build_control_event_row(
-                        output_name,
-                        output_name,
-                        'region',
-                        region['nombre'],
-                        query,
-                        'error',
-                        str(exc),
-                    )
+                event_row = build_control_event_row(
+                    output_name,
+                    output_name,
+                    'region',
+                    region['nombre'],
+                    query,
+                    'error',
+                    str(exc),
                 )
+                persist_control_events_batch([event_row])
+                persist_control_states(control_states)
                 shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
-
-        persist_control_events_batch(control_event_rows)
-        persist_control_states(control_states)
         return shard_errors
 
     shard_error_groups = run_shards(
@@ -315,4 +336,3 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         error_path = output / 'errores.csv'
         pl.DataFrame(errores).write_csv(error_path)
     return output
-

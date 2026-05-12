@@ -14,6 +14,7 @@ from sisap_light.jobs.precios_job import run_sample as run_precios_sample
 from sisap_light.jobs.volumen_job import (
     build_plan as build_volumen_plan,
     inspect_home,
+    inspect_home_mercado,
     inspect_sample_report,
     run_full as run_volumen_full,
     run_sample as run_volumen_sample,
@@ -29,10 +30,13 @@ def _apply_runtime_overrides(
     modo_carga: str | None,
     modulos: str | None,
     procedencias: str | None,
+    mercados: str | None,
     regiones: str | None,
     producto_codigo: str | None,
     producto_nombre: str | None,
     max_queries: int | None,
+    max_productos: int | None,
+    max_scopes: int | None,
     scope_workers: int | None,
     shard_workers: int | None,
     product_batch_size: int | None,
@@ -48,6 +52,8 @@ def _apply_runtime_overrides(
         settings.sisap_modulos = modulos
     if procedencias is not None:
         settings.sisap_procedencias = procedencias
+    if mercados is not None:
+        settings.sisap_mercados = mercados
     if regiones is not None:
         settings.sisap_regiones = regiones
     if producto_codigo is not None:
@@ -56,6 +62,10 @@ def _apply_runtime_overrides(
         settings.sisap_producto_nombre = producto_nombre
     if max_queries is not None:
         settings.sisap_max_queries = max_queries
+    if max_productos is not None:
+        settings.sisap_max_productos = max_productos
+    if max_scopes is not None:
+        settings.sisap_max_scopes = max_scopes
     if scope_workers is not None:
         settings.sisap_scope_max_workers = scope_workers
     if shard_workers is not None:
@@ -80,10 +90,13 @@ def _run_command_with_overrides(
         modo_carga=modo_carga,
         modulos=None,
         procedencias=None,
+        mercados=None,
         regiones=None,
         producto_codigo=None,
         producto_nombre=None,
         max_queries=max_queries,
+        max_productos=None,
+        max_scopes=None,
         scope_workers=scope_workers,
         shard_workers=shard_workers,
         product_batch_size=product_batch_size,
@@ -99,6 +112,7 @@ def _echo_scope_summary(label: str, values: list[str]) -> None:
 def _echo_pipeline_summary(result: dict[str, object]) -> None:
     typer.echo(f"Modulos: {', '.join(result['modulos'])}")
     _echo_scope_summary('Procedencias', result['procedencias'])
+    _echo_scope_summary('Mercados', result['mercados'])
     _echo_scope_summary('Regiones', result['regiones'])
     typer.echo(f"Bloques ejecutados: {len(result['resultados'])}")
     for item in result['resultados']:
@@ -133,10 +147,13 @@ def run_main_command(
     modo_carga: str | None = typer.Option(None, '--modo-carga'),
     modulos: str | None = typer.Option(None, '--modulos'),
     procedencias: str | None = typer.Option(None, '--procedencias'),
+    mercados: str | None = typer.Option(None, '--mercados'),
     regiones: str | None = typer.Option(None, '--regiones'),
     producto_codigo: str | None = typer.Option(None, '--producto-codigo'),
     producto_nombre: str | None = typer.Option(None, '--producto-nombre'),
     max_queries: int | None = typer.Option(None, '--max-queries'),
+    max_productos: int | None = typer.Option(None, '--max-productos'),
+    max_scopes: int | None = typer.Option(None, '--max-scopes'),
     scope_workers: int | None = typer.Option(None, '--scope-workers'),
     shard_workers: int | None = typer.Option(None, '--shard-workers'),
     product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
@@ -147,10 +164,13 @@ def run_main_command(
         modo_carga,
         modulos,
         procedencias,
+        mercados,
         regiones,
         producto_codigo,
         producto_nombre,
         max_queries,
+        max_productos,
+        max_scopes,
         scope_workers,
         shard_workers,
         product_batch_size,
@@ -165,9 +185,23 @@ def inspect_home_command() -> None:
     typer.echo(f"Hidden inputs: {len(data['hidden_inputs'])}")
     typer.echo(f"PostID detectado: {data['post_id']}")
     typer.echo(f"Mercados detectados: {len(data['mercado_options'])}")
-    typer.echo(f"Productos detectados: {len(data['producto_options'])}")
+    typer.echo(f"Productos detectados (mercado por defecto de la home): {len(data['producto_options'])}")
     typer.echo(f"Procedencias detectadas: {len(data['procedencia_options'])}")
     typer.echo(f"Variables detectadas: {len(data['variable_options'])}")
+
+
+@app.command('inspect-home-mercado')
+def inspect_home_mercado_command(
+    mercado_codigo: str = typer.Option(..., '--mercado-codigo', help='Codigo del select mercado (ej. 15011501)'),
+) -> None:
+    """Lista productos disponibles para un mercado (filtrarPorMercado), como en la corrida real."""
+    data = inspect_home_mercado(mercado_codigo)
+    typer.echo(f"Mercado: {data['mercado_codigo']}")
+    typer.echo(f"Productos detectados: {len(data['producto_options'])}")
+    for opt in data['producto_options'][:25]:
+        typer.echo(f"  {opt['value']} — {opt['label']}")
+    if len(data['producto_options']) > 25:
+        typer.echo(f"  ... y {len(data['producto_options']) - 25} mas")
 
 
 @app.command('inspect-sample-report')

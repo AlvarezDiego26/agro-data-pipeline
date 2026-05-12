@@ -24,11 +24,11 @@ def extract_supported_zip_members(path: Path) -> tuple[Path, list[Path]]:
     temp_dir = Path(tempfile.mkdtemp(prefix='sunat_zip_'))
     extracted: list[Path] = []
     with zipfile.ZipFile(path, 'r') as zf:
-        for member in zf.namelist():
+        for index, member in enumerate(zf.namelist(), start=1):
             member_path = Path(member)
             if member_path.suffix.lower() not in SUPPORTED_MEMBER_EXTENSIONS:
                 continue
-            output_path = temp_dir / member_path.name
+            output_path = temp_dir / f'{index:03d}_{member_path.name}'
             with zf.open(member) as src, output_path.open('wb') as dst:
                 dst.write(src.read())
             extracted.append(output_path)

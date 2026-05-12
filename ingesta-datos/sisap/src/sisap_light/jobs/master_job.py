@@ -174,6 +174,7 @@ def run_pipeline_main() -> dict[str, object]:
     return {
         'modulos': settings.modulos_resueltos,
         'procedencias': settings.procedencias_resueltas,
+        'mercados': settings.mercados_resueltos,
         'regiones': settings.regiones_resueltas,
         'resultados': resultados,
         'scope_workers': settings.scope_max_workers,

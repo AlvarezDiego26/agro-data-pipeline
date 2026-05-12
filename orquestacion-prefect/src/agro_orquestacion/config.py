@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     prefect_work_pool_name: str = ""
     prefect_managed_work_pool_name: str = "agro-managed-pool"
     prefect_process_work_pool_name: str = "agro-process-pool"
-    prefect_sisap_interval_hours: int = 4
     prefect_sunat_interval_hours: int = 6
     prefect_sisap_master_interval_hours: int = 4
+    prefect_enable_schedules: bool = False
     prefect_enable_sisap: bool = True
     prefect_enable_sunat: bool = True
     prefect_sisap_timeout_minutes: int = 240
@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     sisap_procedencias: str = "all"
     sisap_regiones: str = "all"
     sisap_productos: str = "all"
+    sisap_mercado_codigo: str = ""
+    sisap_mercado_nombre: str = ""
+    sisap_producto_codigo: str = ""
+    sisap_producto_nombre: str = ""
+    sisap_use_control_table: bool = True
     sisap_estrategia_instanciacion: str = "por_modulo"
     sisap_max_instancias_paralelas: int = 8
     sisap_max_scopes: int | None = None
@@ -78,11 +83,22 @@ class Settings(BaseSettings):
         return self.repo_root / "ingesta-datos" / "sunat"
 
     @property
+    def runtime_venvs_root(self) -> Path:
+        return self.repo_root / ".runtime-venvs"
+
+    @property
+    def sisap_requirements_path(self) -> Path:
+        return self.sisap_root / "requirements.txt"
+
+    @property
+    def sunat_requirements_path(self) -> Path:
+        return self.sunat_root / "requirements.txt"
+
+    @property
     def prefect_requirements(self) -> list[str]:
         return [
             "prefect>=3,<4",
-            "pydantic==2.11.4",
-            "pydantic-settings==2.9.1",
+            "pydantic-settings>=2,<3",
             "python-dotenv==1.1.0",
         ]
 
@@ -111,9 +127,14 @@ class Settings(BaseSettings):
             "SISAP_MODULOS": self.sisap_modulos,
             "SISAP_PROCEDENCIAS": self.sisap_procedencias,
             "SISAP_REGIONES": self.sisap_regiones,
+            "SISAP_MERCADO_CODIGO": self.sisap_mercado_codigo,
+            "SISAP_MERCADO_NOMBRE": self.sisap_mercado_nombre,
+            "SISAP_PRODUCTO_CODIGO": self.sisap_producto_codigo,
+            "SISAP_PRODUCTO_NOMBRE": self.sisap_producto_nombre,
             "SISAP_SCOPE_MAX_WORKERS": str(self.sisap_scope_max_workers),
             "SISAP_SHARD_MAX_WORKERS": str(self.sisap_shard_max_workers),
             "SISAP_PRODUCT_BATCH_SIZE": str(self.sisap_product_batch_size),
+            "SISAP_USE_CONTROL_TABLE": str(self.sisap_use_control_table).lower(),
         }
         if self.sisap_max_scopes is not None:
             env["SISAP_MAX_SCOPES"] = str(self.sisap_max_scopes)

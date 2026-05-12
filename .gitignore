@@ -3,6 +3,7 @@
 **/*.egg-info/
 **/.venv/
 **/.venv-prefect/
+**/.runtime-venvs/
 **/.env
 **/data/raw/
 **/data/clean/
@@ -11,4 +12,5 @@
 **/data/processed/
 **/data/error/
 **/data/review/
+ingesta-datos/sunat/Landing/
 **/CHECKLIST_FINAL_*.md

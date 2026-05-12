@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import concurrent.futures
 import sys
 
 from prefect import flow, task
-from prefect.task_runners import ConcurrentTaskRunner
 
 from agro_orquestacion.config import get_settings
-from agro_orquestacion.runner import install_requirements, run_python_module
+from agro_orquestacion.runner import ensure_runtime_python, run_python_module
 
 
 def _merge_env(base_env: dict[str, str], overrides: dict[str, str | int | None]) -> dict[str, str]:
@@ -18,26 +18,6 @@ def _merge_env(base_env: dict[str, str], overrides: dict[str, str | int | None])
 
 
 @task(retries=2, retry_delay_seconds=60)
-def bootstrap_sisap_runtime() -> None:
-    settings = get_settings()
-    install_requirements(
-        settings.sisap_root / "requirements.txt",
-        working_dir=settings.sisap_root,
-        environment=settings.sisap_env(),
-    )
-
-
-@task(retries=2, retry_delay_seconds=60)
-def bootstrap_sunat_runtime() -> None:
-    settings = get_settings()
-    install_requirements(
-        settings.sunat_root / "requirements.txt",
-        working_dir=settings.sunat_root,
-        environment=settings.sunat_env(),
-    )
-
-
-@task(retries=2, retry_delay_seconds=60)
 def run_sisap_task(
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
@@ -45,6 +25,8 @@ def run_sisap_task(
     modulos: str | None = None,
     procedencias: str | None = None,
     regiones: str | None = None,
+    mercado_codigo: str | None = None,
+    mercado_nombre: str | None = None,
     producto_codigo: str | None = None,
     producto_nombre: str | None = None,
     max_queries: int | None = None,
@@ -54,6 +36,12 @@ def run_sisap_task(
     use_control_table: bool | None = None,
 ) -> None:
     settings = get_settings()
+    python_executable = ensure_runtime_python(
+        "sisap",
+        settings.sisap_requirements_path,
+        settings.sisap_root,
+        settings.runtime_venvs_root,
+    )
     environment = _merge_env(
         settings.sisap_env(),
         {
@@ -63,6 +51,8 @@ def run_sisap_task(
             "SISAP_MODULOS": modulos,
             "SISAP_PROCEDENCIAS": procedencias,
             "SISAP_REGIONES": regiones,
+            "SISAP_MERCADO_CODIGO": mercado_codigo,
+            "SISAP_MERCADO_NOMBRE": mercado_nombre,
             "SISAP_PRODUCTO_CODIGO": producto_codigo,
             "SISAP_PRODUCTO_NOMBRE": producto_nombre,
             "SISAP_MAX_QUERIES": max_queries,
@@ -79,6 +69,7 @@ def run_sisap_task(
         arguments=["run-main"],
         working_dir=settings.sisap_root,
         environment=environment,
+        python_executable=python_executable,
     )
 
 
@@ -89,6 +80,12 @@ def run_sunat_task(
     modo_carga: str | None = None,
 ) -> None:
     settings = get_settings()
+    python_executable = ensure_runtime_python(
+        "sunat",
+        settings.sunat_requirements_path,
+        settings.sunat_root,
+        settings.runtime_venvs_root,
+    )
     environment = _merge_env(
         settings.sunat_env(),
         {
@@ -102,16 +99,157 @@ def run_sunat_task(
         arguments=["run-main"],
         working_dir=settings.sunat_root,
         environment=environment,
+        python_executable=python_executable,
     )
 
 
-@flow(name="sisap-main-flow", log_prints=True)
-def sisap_main_flow(
+def _run_sisap_module_task(
+    *,
+    modulo: str,
+    fecha_inicio: str | None,
+    fecha_fin: str | None,
+    modo_carga: str | None,
+    procedencias: str | None,
+    regiones: str | None,
+    mercado_codigo: str | None,
+    mercado_nombre: str | None,
+    producto_codigo: str | None,
+    producto_nombre: str | None,
+    max_queries: int | None,
+    scope_workers: int | None,
+    shard_workers: int | None,
+    product_batch_size: int | None,
+) -> dict[str, object]:
+    settings = get_settings()
+    run_sisap_task.with_options(name=f"sisap-{modulo}").submit(
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        modulos=modulo,
+        procedencias=procedencias,
+        regiones=regiones,
+        mercado_codigo=mercado_codigo,
+        mercado_nombre=mercado_nombre,
+        producto_codigo=producto_codigo,
+        producto_nombre=producto_nombre,
+        max_queries=max_queries,
+        scope_workers=scope_workers or settings.sisap_scope_max_workers,
+        shard_workers=shard_workers or settings.sisap_shard_max_workers,
+        product_batch_size=product_batch_size or settings.sisap_product_batch_size,
+        use_control_table=True,
+    ).result()
+    return {
+        "modulo": modulo,
+        "estado": "success",
+    }
+
+
+def _run_sisap_module_flow(
+    *,
+    modulo: str,
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
     modo_carga: str | None = None,
-    modulos: str | None = None,
     procedencias: str | None = None,
+    regiones: str | None = None,
+    mercado_codigo: str | None = None,
+    mercado_nombre: str | None = None,
+    producto_codigo: str | None = None,
+    producto_nombre: str | None = None,
+    max_queries: int | None = None,
+    scope_workers: int | None = None,
+    shard_workers: int | None = None,
+    product_batch_size: int | None = None,
+) -> dict[str, object]:
+    return _run_sisap_module_task(
+        modulo=modulo,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        procedencias=procedencias,
+        regiones=regiones,
+        mercado_codigo=mercado_codigo,
+        mercado_nombre=mercado_nombre,
+        producto_codigo=producto_codigo,
+        producto_nombre=producto_nombre,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
+
+
+@flow(name="sisap-precios-flow", log_prints=True)
+def sisap_precios_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    procedencias: str | None = None,
+    producto_codigo: str | None = None,
+    producto_nombre: str | None = None,
+    max_queries: int | None = None,
+    scope_workers: int | None = None,
+    shard_workers: int | None = None,
+    product_batch_size: int | None = None,
+) -> dict[str, object]:
+    settings = get_settings()
+    return _run_sisap_module_flow(
+        modulo="precios",
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        procedencias=procedencias or settings.sisap_procedencias,
+        regiones=None,
+        mercado_codigo=None,
+        mercado_nombre=None,
+        producto_codigo=producto_codigo or settings.sisap_producto_codigo or None,
+        producto_nombre=producto_nombre or settings.sisap_producto_nombre or None,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
+
+
+@flow(name="sisap-volumen-flow", log_prints=True)
+def sisap_volumen_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    procedencias: str | None = None,
+    mercado_codigo: str | None = None,
+    mercado_nombre: str | None = None,
+    producto_codigo: str | None = None,
+    producto_nombre: str | None = None,
+    max_queries: int | None = None,
+    scope_workers: int | None = None,
+    shard_workers: int | None = None,
+    product_batch_size: int | None = None,
+) -> dict[str, object]:
+    settings = get_settings()
+    return _run_sisap_module_flow(
+        modulo="volumen",
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        procedencias=procedencias or settings.sisap_procedencias,
+        regiones=None,
+        mercado_codigo=mercado_codigo or settings.sisap_mercado_codigo or None,
+        mercado_nombre=mercado_nombre or settings.sisap_mercado_nombre or None,
+        producto_codigo=producto_codigo or settings.sisap_producto_codigo or None,
+        producto_nombre=producto_nombre or settings.sisap_producto_nombre or None,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
+
+
+@flow(name="sisap-ciudades-mayoristas-flow", log_prints=True)
+def sisap_ciudades_mayoristas_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
     regiones: str | None = None,
     producto_codigo: str | None = None,
     producto_nombre: str | None = None,
@@ -119,32 +257,59 @@ def sisap_main_flow(
     scope_workers: int | None = None,
     shard_workers: int | None = None,
     product_batch_size: int | None = None,
-) -> None:
-    bootstrap_sisap_runtime()
-    run_sisap_task(
+) -> dict[str, object]:
+    settings = get_settings()
+    return _run_sisap_module_flow(
+        modulo="ciudades-mayoristas",
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
         modo_carga=modo_carga,
-        modulos=modulos,
-        procedencias=procedencias,
-        regiones=regiones,
-        producto_codigo=producto_codigo,
-        producto_nombre=producto_nombre,
+        procedencias=None,
+        regiones=regiones or settings.sisap_regiones,
+        mercado_codigo=None,
+        mercado_nombre=None,
+        producto_codigo=producto_codigo or settings.sisap_producto_codigo or None,
+        producto_nombre=producto_nombre or settings.sisap_producto_nombre or None,
         max_queries=max_queries,
         scope_workers=scope_workers,
         shard_workers=shard_workers,
         product_batch_size=product_batch_size,
-        use_control_table=True,
     )
 
 
-def _split_csv(raw_value: str | None) -> list[str]:
-    if not raw_value:
-        return []
-    return [item.strip() for item in raw_value.split(",") if item.strip()]
+@flow(name="sisap-ciudades-minoristas-flow", log_prints=True)
+def sisap_ciudades_minoristas_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    regiones: str | None = None,
+    producto_codigo: str | None = None,
+    producto_nombre: str | None = None,
+    max_queries: int | None = None,
+    scope_workers: int | None = None,
+    shard_workers: int | None = None,
+    product_batch_size: int | None = None,
+) -> dict[str, object]:
+    settings = get_settings()
+    return _run_sisap_module_flow(
+        modulo="ciudades-minoristas",
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        procedencias=None,
+        regiones=regiones or settings.sisap_regiones,
+        mercado_codigo=None,
+        mercado_nombre=None,
+        producto_codigo=producto_codigo or settings.sisap_producto_codigo or None,
+        producto_nombre=producto_nombre or settings.sisap_producto_nombre or None,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
 
 
-@flow(name="sisap-master-flow", log_prints=True, task_runner=ConcurrentTaskRunner())
+@flow(name="sisap-master-flow", log_prints=True)
 def sisap_master_flow(
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
@@ -152,66 +317,105 @@ def sisap_master_flow(
     modulos: str | None = None,
     procedencias: str | None = None,
     regiones: str | None = None,
-    productos: str | None = None,
-    estrategia_instanciacion: str | None = None,
-    max_instancias_paralelas: int | None = None,
     max_queries: int | None = None,
     scope_workers: int | None = None,
     shard_workers: int | None = None,
     product_batch_size: int | None = None,
 ) -> dict[str, object]:
     settings = get_settings()
-    bootstrap_sisap_runtime()
-    module_list = _split_csv(modulos or settings.sisap_modulos)
-    requested_procedencias = procedencias or settings.sisap_procedencias
-    requested_regiones = regiones or settings.sisap_regiones
-    batch_size = max(int(max_instancias_paralelas or settings.sisap_max_instancias_paralelas), 1)
-    resultados: list[dict[str, str]] = []
+    requested_modules = [
+        item.strip()
+        for item in (modulos or settings.sisap_modulos).split(",")
+        if item.strip()
+    ]
+    flow_map = {
+        "precios": lambda: sisap_precios_flow.with_options(
+            timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
+        )(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo_carga=modo_carga,
+            procedencias=procedencias or settings.sisap_procedencias,
+            producto_codigo=settings.sisap_producto_codigo or None,
+            producto_nombre=settings.sisap_producto_nombre or None,
+            max_queries=max_queries,
+            scope_workers=scope_workers,
+            shard_workers=shard_workers,
+            product_batch_size=product_batch_size,
+        ),
+        "volumen": lambda: sisap_volumen_flow.with_options(
+            timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
+        )(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo_carga=modo_carga,
+            procedencias=procedencias or settings.sisap_procedencias,
+            mercado_codigo=settings.sisap_mercado_codigo or None,
+            mercado_nombre=settings.sisap_mercado_nombre or None,
+            producto_codigo=settings.sisap_producto_codigo or None,
+            producto_nombre=settings.sisap_producto_nombre or None,
+            max_queries=max_queries,
+            scope_workers=scope_workers,
+            shard_workers=shard_workers,
+            product_batch_size=product_batch_size,
+        ),
+        "ciudades-mayoristas": lambda: sisap_ciudades_mayoristas_flow.with_options(
+            timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
+        )(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo_carga=modo_carga,
+            regiones=regiones or settings.sisap_regiones,
+            producto_codigo=settings.sisap_producto_codigo or None,
+            producto_nombre=settings.sisap_producto_nombre or None,
+            max_queries=max_queries,
+            scope_workers=scope_workers,
+            shard_workers=shard_workers,
+            product_batch_size=product_batch_size,
+        ),
+        "ciudades-minoristas": lambda: sisap_ciudades_minoristas_flow.with_options(
+            timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
+        )(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo_carga=modo_carga,
+            regiones=regiones or settings.sisap_regiones,
+            producto_codigo=settings.sisap_producto_codigo or None,
+            producto_nombre=settings.sisap_producto_nombre or None,
+            max_queries=max_queries,
+            scope_workers=scope_workers,
+            shard_workers=shard_workers,
+            product_batch_size=product_batch_size,
+        ),
+    }
 
-    for start in range(0, len(module_list), batch_size):
-        batch = module_list[start : start + batch_size]
-        futures: list[tuple[str, object]] = []
-        for modulo in batch:
-            task_name = f"sisap-{modulo}"
-            future = run_sisap_task.with_options(name=task_name).submit(
-                fecha_inicio=fecha_inicio,
-                fecha_fin=fecha_fin,
-                modo_carga=modo_carga,
-                modulos=modulo,
-                procedencias=requested_procedencias if modulo in {"volumen", "precios"} else None,
-                regiones=requested_regiones if modulo in {"ciudades-mayoristas", "ciudades-minoristas"} else None,
-                max_queries=max_queries,
-                scope_workers=scope_workers or settings.sisap_scope_max_workers,
-                shard_workers=shard_workers or settings.sisap_shard_max_workers,
-                product_batch_size=product_batch_size or settings.sisap_product_batch_size,
-                use_control_table=False,
-            )
-            futures.append((modulo, future))
+    resultados: list[dict[str, object]] = []
+    errores: list[str] = []
 
-        for modulo, future in futures:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(requested_modules) or 1) as executor:
+        futures = {
+            executor.submit(flow_map[modulo]): modulo
+            for modulo in requested_modules
+            if modulo in flow_map
+        }
+        for future in concurrent.futures.as_completed(futures):
+            modulo = futures[future]
             try:
                 future.result()
-                resultados.append(
-                    {
-                        "instancia": modulo,
-                        "estado": "success",
-                    }
-                )
+                resultados.append({"instancia": modulo, "estado": "success"})
             except Exception as exc:
-                resultados.append(
-                    {
-                        "instancia": modulo,
-                        "estado": "error",
-                        "error": str(exc),
-                    }
-                )
+                resultados.append({"instancia": modulo, "estado": "error", "error": str(exc)})
+                errores.append(f"{modulo}: {exc}")
 
-    return {
-        "estrategia_instanciacion": "por_modulo",
-        "instancias_planificadas": len(module_list),
+    summary = {
+        "estrategia_instanciacion": "flows_independientes",
+        "instancias_planificadas": len(requested_modules),
         "instancias_ejecutadas": len(resultados),
         "resultados": resultados,
     }
+    if errores:
+        raise RuntimeError("Fallaron instancias del maestro SISAP: " + " | ".join(errores))
+    return summary
 
 
 @flow(name="sunat-main-flow", log_prints=True)
@@ -220,7 +424,6 @@ def sunat_main_flow(
     fecha_corte_fin: str | None = None,
     modo_carga: str | None = None,
 ) -> None:
-    bootstrap_sunat_runtime()
     run_sunat_task(
         fecha_corte_inicio=fecha_corte_inicio,
         fecha_corte_fin=fecha_corte_fin,
@@ -239,17 +442,29 @@ def agro_ingesta_flow(
 ) -> None:
     settings = get_settings()
 
-    if run_sisap and settings.prefect_enable_sisap:
-        sisap_master_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)(
-            fecha_inicio=sisap_fecha_inicio,
-            fecha_fin=sisap_fecha_fin,
-        )
+    def _run_sisap():
+        if run_sisap and settings.prefect_enable_sisap:
+            sisap_master_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)(
+                fecha_inicio=sisap_fecha_inicio,
+                fecha_fin=sisap_fecha_fin,
+            )
 
-    if run_sunat and settings.prefect_enable_sunat:
-        sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)(
-            fecha_corte_inicio=sunat_fecha_corte_inicio,
-            fecha_corte_fin=sunat_fecha_corte_fin,
-        )
+    def _run_sunat():
+        if run_sunat and settings.prefect_enable_sunat:
+            sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)(
+                fecha_corte_inicio=sunat_fecha_corte_inicio,
+                fecha_corte_fin=sunat_fecha_corte_fin,
+            )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = []
+        if run_sisap and settings.prefect_enable_sisap:
+            futures.append(executor.submit(_run_sisap))
+        if run_sunat and settings.prefect_enable_sunat:
+            futures.append(executor.submit(_run_sunat))
+
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
 
 
 def _main() -> None:
@@ -257,8 +472,14 @@ def _main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "agro"
     if mode == "sisap":
         sisap_master_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
-    elif mode == "sisap-main":
-        sisap_main_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
+    elif mode == "sisap-precios":
+        sisap_precios_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
+    elif mode == "sisap-volumen":
+        sisap_volumen_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
+    elif mode == "sisap-ciudades-mayoristas":
+        sisap_ciudades_mayoristas_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
+    elif mode == "sisap-ciudades-minoristas":
+        sisap_ciudades_minoristas_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
     elif mode == "sunat":
         sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)()
     else:

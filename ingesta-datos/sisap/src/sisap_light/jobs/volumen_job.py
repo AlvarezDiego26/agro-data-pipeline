@@ -1,4 +1,3 @@
-from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -11,16 +10,16 @@ from sisap_light.jobs.common import (
     append_partitioned_output,
     build_control_event_row,
     build_scope_output_dir,
+    expand_mayorista_plan_for_procedencia,
     filter_plan,
     init_control_states,
+    iter_mercados_ejecucion,
     persist_control_events_batch,
     persist_control_states,
     register_control_failure,
     register_control_query,
     register_control_success,
     resolve_item,
-    resolve_productos,
-    resolve_query_dates,
 )
 from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_forms import (
@@ -32,14 +31,22 @@ from sisap_light.procesamiento.parsers.html_forms import (
     extract_variable_options,
 )
 from sisap_light.procesamiento.parsers.html_tables import detect_primary_table, extract_report_titles
-from sisap_light.ingesta_datos.planners import build_mayorista_queries
 from sisap_light.schemas import ModuloSisap, SisapQuery
 from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.volumen import build_volumen_frame
 from sisap_light.procesamiento.limpieza import validate_expected_columns, validate_non_empty
 
-EXPECTED_COLUMNS = ['fecha', 'producto_codigo', 'producto_nombre', 'variedad', 'procedencia', 'volumen_ton']
+EXPECTED_COLUMNS = [
+    'fecha',
+    'mercado_codigo',
+    'mercado_nombre',
+    'producto_codigo',
+    'producto_nombre',
+    'variedad',
+    'procedencia',
+    'volumen_ton',
+]
 MAX_SAMPLE_QUERIES = 12
 
 
@@ -67,42 +74,36 @@ def inspect_home() -> dict:
     }
 
 
+def inspect_home_mercado(mercado_codigo: str) -> dict:
+    """Productos para un mercado concreto (misma logica que la corrida)."""
+    extractor = SisapMayoristaExtractor()
+    html = extractor.fetch_productos_por_mercado_html(mercado_codigo)
+    return {
+        'mercado_codigo': mercado_codigo,
+        'producto_options': extract_checkbox_products(html),
+        'html': html,
+    }
+
+
 def _build_raw_plan(
+    mercado_nombre: str | None = None,
     procedencia_nombre: str | None = None,
     productos_override: list[dict] | None = None,
 ) -> list[SisapQuery]:
-    settings = get_settings()
     procedencia = _resolve_procedencia(procedencia_nombre)
-    productos = productos_override or resolve_productos(settings.sisap_producto_codigo, settings.sisap_producto_nombre)
+    mercados = iter_mercados_ejecucion(mercado_nombre)
     plan: list[SisapQuery] = []
-
-    for producto in productos:
-        resolved_dates = resolve_query_dates(
-            control_modulo='volumen',
-            output_name='volumen_diario',
-            scope_label='procedencia',
-            scope_value=procedencia['nombre'],
-            producto_codigo=producto['codigo'],
-            producto_nombre=producto['nombre'],
-            fecha_inicio=settings.fecha_inicio_resuelta,
-            fecha_fin=settings.fecha_fin_resuelta,
-        )
-        if resolved_dates is None:
-            continue
-
-        fecha_inicio, fecha_fin = resolved_dates
+    for mercado in mercados:
         plan.extend(
-            build_mayorista_queries(
+            expand_mayorista_plan_for_procedencia(
+                control_modulo='volumen',
+                output_name='volumen_diario_mercado_lima',
                 modulo=ModuloSisap.MAYORISTA_VOLUMEN,
-                fecha_inicio=fecha_inicio,
-                fecha_fin=fecha_fin,
-                procedencia_codigo=procedencia['codigo'],
-                mercado_codigo=settings.sisap_mercado_codigo,
-                mercado_nombre=settings.sisap_mercado_nombre,
-                productos=[producto],
+                mercado=mercado,
+                procedencia=procedencia,
+                productos_override=productos_override,
             )
         )
-
     return plan
 
 
@@ -143,21 +144,21 @@ def run_sample() -> Path:
     return output
 
 
-def run_full(procedencia_nombre: str | None = None) -> Path:
+def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
     procedencia = _resolve_procedencia(procedencia_nombre)
-    plan = filter_plan(_build_raw_plan(procedencia['nombre']), settings.sisap_max_queries)
+    plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre']), settings.sisap_max_queries)
     if not plan:
         logger.info('No hay queries pendientes para volumen.')
-        return build_scope_output_dir('volumen_diario', 'procedencia', procedencia['nombre'])
+        return build_scope_output_dir('volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'])
 
     errores: list[dict[str, str]] = []
-    output = build_scope_output_dir('volumen_diario', 'procedencia', procedencia['nombre'])
+    output = build_scope_output_dir('volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'])
     output.mkdir(parents=True, exist_ok=True)
 
     shards = build_grouped_shards(
         plan,
-        group_key=lambda query: query.producto_codigo,
+        group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
         chunk_size=settings.product_batch_size,
         shard_prefix=f'volumen-{procedencia["codigo"]}',
     )
@@ -166,84 +167,104 @@ def run_full(procedencia_nombre: str | None = None) -> Path:
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
-        control_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
-                'Procesando volumen shard={} {}/{} producto={} codigo={}',
+                'Procesando volumen shard={} {}/{} mercado={} producto={} codigo={}',
                 shard.shard_id,
                 idx,
                 len(shard.items),
+                query.mercado_codigo,
                 query.producto_nombre,
                 query.producto_codigo,
             )
-            register_control_query(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query)
+            register_control_query(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query)
             try:
                 report_html = extractor.fetch_report(query, variable='volumen')
                 df = _normalize_report(query, report_html)
                 save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
 
                 if df.is_empty():
+                    logger.warning(
+                        'Sin resultados de volumen para mercado={} procedencia={} producto={} codigo={} rango={}..{}',
+                        query.mercado_codigo,
+                        procedencia['nombre'],
+                        query.producto_nombre,
+                        query.producto_codigo,
+                        query.fecha_inicio,
+                        query.fecha_fin,
+                    )
                     register_control_success(
                         control_states,
                         'volumen',
-                        'volumen_diario',
+                        'volumen_diario_mercado_lima',
                         'procedencia',
                         procedencia['nombre'],
                         query,
                         estado='empty',
                     )
-                    control_event_rows.append(
-                        build_control_event_row(
-                            'volumen',
-                            'volumen_diario',
-                            'procedencia',
-                            procedencia['nombre'],
-                            query,
-                            'empty',
-                            'sin_resultados',
-                        )
+                    event_row = build_control_event_row(
+                        'volumen',
+                        'volumen_diario_mercado_lima',
+                        'procedencia',
+                        procedencia['nombre'],
+                        query,
+                        'empty',
+                        'sin_resultados',
                     )
-                    shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
+                    persist_control_events_batch([event_row])
+                    persist_control_states(control_states)
+                    shard_errors.append(
+                        {
+                            'mercado_codigo': query.mercado_codigo or '',
+                            'producto_codigo': query.producto_codigo,
+                            'producto_nombre': query.producto_nombre,
+                            'motivo': 'sin_resultados',
+                        }
+                    )
                     continue
 
                 validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
                 append_partitioned_output(
                     frames=[df],
-                    output_name='volumen_diario',
+                    output_name='volumen_diario_mercado_lima',
                     expected_columns=EXPECTED_COLUMNS,
-                    sort_columns=['producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
                     scope_label='procedencia',
                     scope_value=procedencia['nombre'],
                 )
-                register_control_success(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query)
-                control_event_rows.append(
-                    build_control_event_row(
-                        'volumen',
-                        'volumen_diario',
-                        'procedencia',
-                        procedencia['nombre'],
-                        query,
-                        'success',
-                    )
+                register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query)
+                event_row = build_control_event_row(
+                    'volumen',
+                    'volumen_diario_mercado_lima',
+                    'procedencia',
+                    procedencia['nombre'],
+                    query,
+                    'success',
                 )
+                persist_control_events_batch([event_row])
+                persist_control_states(control_states)
             except Exception as exc:
                 logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, 'volumen', 'volumen_diario', 'procedencia', procedencia['nombre'], query, str(exc))
-                control_event_rows.append(
-                    build_control_event_row(
-                        'volumen',
-                        'volumen_diario',
-                        'procedencia',
-                        procedencia['nombre'],
-                        query,
-                        'error',
-                        str(exc),
-                    )
+                register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query, str(exc))
+                event_row = build_control_event_row(
+                    'volumen',
+                    'volumen_diario_mercado_lima',
+                    'procedencia',
+                    procedencia['nombre'],
+                    query,
+                    'error',
+                    str(exc),
                 )
-                shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
-
-        persist_control_events_batch(control_event_rows)
-        persist_control_states(control_states)
+                persist_control_events_batch([event_row])
+                persist_control_states(control_states)
+                shard_errors.append(
+                    {
+                        'mercado_codigo': query.mercado_codigo or '',
+                        'producto_codigo': query.producto_codigo,
+                        'producto_nombre': query.producto_nombre,
+                        'motivo': str(exc),
+                    }
+                )
         return shard_errors
 
     shard_error_groups = run_shards(
@@ -274,4 +295,3 @@ def inspect_sample_report() -> dict:
         'rows': rows[:5],
         'html': report_html,
     }
-
