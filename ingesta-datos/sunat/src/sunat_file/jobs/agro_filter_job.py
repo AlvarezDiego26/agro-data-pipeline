@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
@@ -15,7 +15,6 @@ from sunat_file.storage.control import (
     upsert_control_records,
 )
 from sunat_file.storage.delta import save_delta_table
-from sunat_file.storage.parquet import save_parquet, save_raw_parquet
 from sunat_file.transformers.agro import (
     build_catalog_file,
     build_data_dictionary,
@@ -26,28 +25,26 @@ from sunat_file.transformers.agro import (
     build_ubigeo_quality_report,
 )
 
-SOURCE_DATASET = 'sunat_exportaciones_base'
 OUTPUT_DATASET = 'sunat_exportaciones_agrarias_frescas'
-OUTPUT_FILE = f'{OUTPUT_DATASET}.parquet'
 
 
 def _source_path() -> Path:
-    fecha_extraccion = date.today().isoformat()
     settings = get_settings()
-    return settings.extraccion_dir / f'fecha_extraccion={fecha_extraccion}' / SOURCE_DATASET
+    return settings.extraccion_dir
 
 
-def _clean_path() -> Path:
-    fecha_consolidacion = date.today().isoformat()
+def _clean_path() -> str:
     settings = get_settings()
-    return settings.consolidacion_agricola_dir / f'fecha_consolidacion={fecha_consolidacion}' / OUTPUT_FILE
+    return settings.build_delta_uri('exportaciones_filtradas/tablon_exportaciones_agrarias')
 
 
-def _get_last_clean_date(path: Path) -> date | None:
-    if not path.exists():
-        return None
+def _get_last_clean_date(uri: str) -> date | None:
+    settings = get_settings()
     try:
-        df = pl.read_parquet(path, columns=['fecha']).drop_nulls()
+        df = pl.read_delta(
+            uri, 
+            storage_options=settings.delta_storage_options
+        ).select(['fecha']).drop_nulls()
         if df.is_empty():
             return None
         return df.get_column('fecha').max()
@@ -187,13 +184,26 @@ def run_filter_agro() -> dict[str, str | int]:
 
     fecha_inicio, fecha_fin = resolved_dates
     try:
-        source_df = pl.scan_parquet(source_path / '**/*.parquet').collect()
+        if settings.is_minio:
+            from sunat_file.jobs.import_job import ZIP_CONSOLIDATED_DATASET
+            source_uri = settings.build_delta_uri(ZIP_CONSOLIDATED_DATASET)
+            logger.info(f"Leyendo base Delta desde MinIO: {source_uri}")
+            source_df = pl.read_delta(
+                source_uri,
+                storage_options=settings.delta_storage_options
+            )
+        else:
+            source_df = pl.scan_parquet(source_path / '**/*.parquet').collect()
+        
+        logger.info(f"Procesando {source_df.height} registros base para filtrado agrícola")
         fresh_df = build_sunat_exportaciones_frescas(source_df)
         if fresh_df.is_empty():
+            logger.warning("No se encontraron registros que cumplan los criterios de 'agrícola fresco'")
             _persist_control(fecha_inicio, fecha_fin, None, 'no_data', 'sin_registros_frescos_en_base')
             _persist_control_event(fecha_inicio, fecha_fin, 'empty', None, 'sin_registros_frescos_en_base')
             return {
                 'rows': 0,
+                'base_rows': source_df.height,
                 'raw_path': '',
                 'preview_path': '',
                 'resumen_path': '',
@@ -206,13 +216,18 @@ def run_filter_agro() -> dict[str, str | int]:
                 'clean_path': str(_clean_path()),
             }
 
-        window_df = fresh_df.filter((pl.col('fecha') >= fecha_inicio) & (pl.col('fecha') <= fecha_fin))
+        # Asegurar que comparamos fechas contra fechas
+        window_df = fresh_df.filter(
+            (pl.col('fecha') >= fecha_inicio) & 
+            (pl.col('fecha') <= fecha_fin)
+        )
 
         if window_df.is_empty():
             _persist_control(fecha_inicio, fecha_fin, None, 'no_data', 'sin_registros_en_rango')
             _persist_control_event(fecha_inicio, fecha_fin, 'empty', None, 'sin_registros_en_rango')
             return {
                 'rows': 0,
+                'base_rows': source_df.height,
                 'raw_path': '',
                 'preview_path': '',
                 'resumen_path': '',
@@ -225,18 +240,23 @@ def run_filter_agro() -> dict[str, str | int]:
                 'clean_path': str(clean_path),
             }
 
-        raw_path = save_raw_parquet(window_df, f'{OUTPUT_DATASET}_raw')
+        # Añadir metadatos de auditoría al tablón maestro
+        fecha_proceso_str = date.today().isoformat()
+        merged_df = window_df.with_columns(
+            pl.lit(fecha_proceso_str).alias('fecha_proceso')
+        )
 
-        merged_df = window_df
-        if clean_path.exists():
-            existing_df = pl.read_parquet(clean_path)
-            merged_df = pl.concat([existing_df, window_df], how='diagonal_relaxed').unique()
+        # Ingestión atómica en el Tablón Maestro Delta (Snapshot Unificado)
+        # Se particiona por fecha_proceso para identificar la versión del tablón
+        # El modo overwrite asegura que el tablón sea la fuente única y limpia
+        table_uri = save_delta_table(
+            merged_df, 
+            'exportaciones_filtradas/tablon_maestro_agrario', 
+            ['fecha_proceso'],
+            overwrite=True
+        )
 
-        save_parquet(merged_df, clean_path)
-        if settings.sunat_delta_enabled:
-            save_delta_table(window_df, f'consolidacion_agricola/fecha_consolidacion={fecha_consolidacion}/{OUTPUT_DATASET}', ['anio', 'mes'])
-
-        review_dir = settings.consolidacion_agricola_dir / f'fecha_consolidacion={fecha_consolidacion}'
+        review_dir = settings.consolidacion_agricola_dir / 'reportes'
         preview_path, resumen_path, resumen_subpartidas_path = build_review_files(merged_df, review_dir)
         catalog_path = build_catalog_file(merged_df, review_dir)
         territory_path = build_territory_catalog(merged_df, review_dir)
@@ -250,7 +270,8 @@ def run_filter_agro() -> dict[str, str | int]:
 
         return {
             'rows': window_df.height,
-            'raw_path': str(raw_path),
+            'base_rows': source_df.height,
+            'raw_path': '',
             'preview_path': str(preview_path),
             'resumen_path': str(resumen_path),
             'resumen_subpartidas_path': str(resumen_subpartidas_path),
@@ -259,7 +280,7 @@ def run_filter_agro() -> dict[str, str | int]:
             'region_summary_path': str(region_summary_path),
             'ubigeo_quality_path': str(ubigeo_quality_path),
             'diccionario_path': str(dict_path),
-            'clean_path': str(clean_path),
+            'clean_path': table_uri,
         }
     except Exception as exc:
         logger.exception('Fallo filtrando el dataset agrario fresco SUNAT')

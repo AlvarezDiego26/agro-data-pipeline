@@ -183,16 +183,18 @@ python -m agro_orquestacion.deploy
 
 ### Modo `managed`
 Si `PREFECT_EXECUTION_MODE=managed`, publica:
-- `sisap-managed`
-- `sisap-master-managed`
+- `sisap-volumen-managed`
+- `sisap-precios-managed`
+- `sisap-regiones-managed`
 - `sunat-managed`
 
 en el work pool configurado para `managed`.
 
 ### Modo `process`
 Si `PREFECT_EXECUTION_MODE=process`, publica:
-- `sisap-local`
-- `sisap-master-local`
+- `sisap-volumen-local`
+- `sisap-precios-local`
+- `sisap-regiones-local`
 - `sunat-local`
 
 en el work pool configurado para `process`.
@@ -216,7 +218,7 @@ Levantar el worker local desde la raiz del repo:
 prefect worker start --pool "agro-process-pool" --type process --limit 4
 ```
 
-Con esto, los runs de `sisap-master-local` y `sunat-local` ya generan logs reales del Python que se ejecuta en tu maquina.
+Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regiones-local` y `sunat-local` ya generan logs reales del Python que se ejecuta en tu maquina.
 
 ## Principio De Diseño
 - `Prefect` orquesta

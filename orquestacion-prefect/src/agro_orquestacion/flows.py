@@ -17,7 +17,11 @@ def _merge_env(base_env: dict[str, str], overrides: dict[str, str | int | None])
     return merged
 
 
-@task(retries=2, retry_delay_seconds=60)
+@task(
+    retries=5, 
+    retry_delay_seconds=[60, 300, 600, 1200, 1800], 
+    tags=["sisap-concurrency"]
+)
 def run_sisap_task(
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
@@ -25,6 +29,7 @@ def run_sisap_task(
     modulos: str | None = None,
     procedencias: str | None = None,
     regiones: str | None = None,
+    mercados: str | None = None,
     mercado_codigo: str | None = None,
     mercado_nombre: str | None = None,
     producto_codigo: str | None = None,
@@ -51,6 +56,7 @@ def run_sisap_task(
             "SISAP_MODULOS": modulos,
             "SISAP_PROCEDENCIAS": procedencias,
             "SISAP_REGIONES": regiones,
+            "SISAP_MERCADOS": mercados,
             "SISAP_MERCADO_CODIGO": mercado_codigo,
             "SISAP_MERCADO_NOMBRE": mercado_nombre,
             "SISAP_PRODUCTO_CODIGO": producto_codigo,
@@ -73,7 +79,11 @@ def run_sisap_task(
     )
 
 
-@task(retries=2, retry_delay_seconds=60)
+@task(
+    retries=3, 
+    retry_delay_seconds=[60, 600, 1800], 
+    tags=["sunat-concurrency"]
+)
 def run_sunat_task(
     fecha_corte_inicio: str | None = None,
     fecha_corte_fin: str | None = None,
@@ -309,6 +319,38 @@ def sisap_ciudades_minoristas_flow(
     )
 
 
+@flow(name="sisap-regiones-flow", log_prints=True)
+def sisap_regiones_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    regiones: str | None = None,
+    producto_codigo: str | None = None,
+    producto_nombre: str | None = None,
+    max_queries: int | None = None,
+    scope_workers: int | None = None,
+    shard_workers: int | None = None,
+    product_batch_size: int | None = None,
+) -> dict[str, object]:
+    settings = get_settings()
+    return _run_sisap_module_flow(
+        modulo="regiones",
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        procedencias=None,
+        regiones=regiones or settings.sisap_regiones,
+        mercado_codigo=None,
+        mercado_nombre=None,
+        producto_codigo=producto_codigo or settings.sisap_producto_codigo or None,
+        producto_nombre=producto_nombre or settings.sisap_producto_nombre or None,
+        max_queries=max_queries,
+        scope_workers=scope_workers,
+        shard_workers=shard_workers,
+        product_batch_size=product_batch_size,
+    )
+
+
 @flow(name="sisap-master-flow", log_prints=True)
 def sisap_master_flow(
     fecha_inicio: str | None = None,
@@ -374,6 +416,20 @@ def sisap_master_flow(
             product_batch_size=product_batch_size,
         ),
         "ciudades-minoristas": lambda: sisap_ciudades_minoristas_flow.with_options(
+            timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
+        )(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            modo_carga=modo_carga,
+            regiones=regiones or settings.sisap_regiones,
+            producto_codigo=settings.sisap_producto_codigo or None,
+            producto_nombre=settings.sisap_producto_nombre or None,
+            max_queries=max_queries,
+            scope_workers=scope_workers,
+            shard_workers=shard_workers,
+            product_batch_size=product_batch_size,
+        ),
+        "regiones": lambda: sisap_regiones_flow.with_options(
             timeout_seconds=60 * settings.prefect_sisap_timeout_minutes
         )(
             fecha_inicio=fecha_inicio,
@@ -480,6 +536,8 @@ def _main() -> None:
         sisap_ciudades_mayoristas_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
     elif mode == "sisap-ciudades-minoristas":
         sisap_ciudades_minoristas_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
+    elif mode == "sisap-regiones":
+        sisap_regiones_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
     elif mode == "sunat":
         sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)()
     else:

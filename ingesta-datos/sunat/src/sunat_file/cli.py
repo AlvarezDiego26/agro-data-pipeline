@@ -99,6 +99,8 @@ def run_main_command(
     for item in result['imported']:
         typer.echo(f'- {item}')
     fresh = result['fresh']
+    # Mostramos los registros base procesados (del DataFrame original)
+    typer.echo(f"Registros base procesados: {fresh.get('base_rows', 0)}")
     typer.echo(f"Registros frescos filtrados: {fresh['rows']}")
     typer.echo(f"Raw: {fresh['raw_path']}")
     typer.echo(f"Catalogo homologado: {fresh['catalog_path']}")
@@ -111,12 +113,12 @@ def run_main_command(
 
 @app.command('run-filter-agro')
 def run_filter_agro_legacy_command() -> None:
-    run_filter_fresh_command()
-
+    result = run_filter_agro()
+    typer.echo(f"Registros frescos filtrados: {result['rows']}")
 
 @app.command('run-pipeline-agro')
 def run_pipeline_agro_legacy_command() -> None:
-    run_main_command()
+    run_main_command(fecha_inicio=None, fecha_fin=None, modo_carga=None)
 
 
 if __name__ == '__main__':

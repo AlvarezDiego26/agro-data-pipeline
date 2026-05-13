@@ -35,13 +35,15 @@ def build_mayorista_queries(
     modulo: ModuloSisap,
     fecha_inicio: date,
     fecha_fin: date,
-    procedencia_codigo: str,
+    procedencia_codigo: str | None,
     mercado_codigo: str,
     mercado_nombre: str,
     productos: list[dict] | None = None,
 ) -> list[SisapQuery]:
+    """procedencia_codigo vacio o None: consulta mayorista sin filtro de procedencia (volumen consolidado)."""
     productos_base = productos or PRODUCTOS_AGRICOLAS_PRIORITARIOS
-    procedencia_nombre = _find_nombre(PROCEDENCIAS_SISAP, procedencia_codigo)
+    code = (procedencia_codigo or "").strip()
+    procedencia_nombre = _find_nombre(PROCEDENCIAS_SISAP, code) if code else None
     windows = _date_windows(fecha_inicio, fecha_fin)
 
     return [
@@ -51,7 +53,7 @@ def build_mayorista_queries(
             producto_nombre=producto["nombre"],
             fecha_inicio=window_inicio,
             fecha_fin=window_fin,
-            procedencia_codigo=procedencia_codigo,
+            procedencia_codigo=code or None,
             procedencia_nombre=procedencia_nombre,
             mercado_codigo=mercado_codigo,
             mercado_nombre=mercado_nombre,

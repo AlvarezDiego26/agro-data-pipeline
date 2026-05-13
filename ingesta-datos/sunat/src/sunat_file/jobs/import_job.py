@@ -21,10 +21,10 @@ from sunat_file.storage.control import (
 )
 from sunat_file.storage.delta import save_delta_table
 from sunat_file.storage.merge import deduplicate_dataset, normalize_dataset
-from sunat_file.storage.parquet import save_partitioned_parquet, save_raw_parquet
+
 from sunat_file.transformers.base import normalize_columns
 
-ZIP_CONSOLIDATED_DATASET = 'sunat_exportaciones_base'
+ZIP_CONSOLIDATED_DATASET = 'base_agro_delta'
 REMOTE_LISTING_DATASET = 'sunat_remote_files'
 SUPPORTED_DIRECT_EXTENSIONS = {'.dbf'}
 SKIPPED_DIRECT_EXTENSIONS = {'.xlsx', '.xlsm', '.xls'}
@@ -177,22 +177,20 @@ def _persist_base_dataset(df: pl.DataFrame) -> None:
     validate_non_empty(raw_df, ZIP_CONSOLIDATED_DATASET)
     raw_df = normalize_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
     raw_df = deduplicate_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
+    
+    # Construir fecha_particion basada en el periodo del archivo (primer dia del mes)
     raw_df = raw_df.with_columns(
-        pl.col('archivo_anio_publicacion').cast(pl.Int32).alias('anio'),
-        pl.col('archivo_mes_publicacion').cast(pl.Utf8).alias('mes'),
+        pl.concat_str([
+            pl.col('archivo_anio_publicacion').cast(pl.Utf8),
+            pl.lit('-'),
+            pl.col('archivo_mes_publicacion').str.zfill(2),
+            pl.lit('-01')
+        ]).alias('fecha_particion')
     )
 
-    fecha_extraccion = date.today().isoformat()
-    settings = get_settings()
-    base_dir = settings.extraccion_dir / f'fecha_extraccion={fecha_extraccion}' / ZIP_CONSOLIDATED_DATASET
-    save_partitioned_parquet(raw_df, ZIP_CONSOLIDATED_DATASET, base_dir, ['anio', 'mes'])
-
-    if settings.sunat_delta_enabled:
-        save_delta_table(
-            raw_df,
-            f'extraccion/fecha_extraccion={fecha_extraccion}/{ZIP_CONSOLIDATED_DATASET}',
-            ['anio', 'mes'],
-        )
+    # Ingestión unificada usando Delta Lake
+    # Esto genera la carpeta _delta_log y permite particionamiento limpio
+    save_delta_table(raw_df, ZIP_CONSOLIDATED_DATASET, ['fecha_particion'])
 
 
 def _persist_source_dataset(frames: list[pl.DataFrame]) -> list[str]:

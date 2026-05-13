@@ -29,6 +29,7 @@ from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
 from sisap_light.procesamiento.transformers.ciudades import build_ciudades_metric_frame, merge_ciudades_metrics
 from sisap_light.procesamiento.limpieza import validate_expected_columns, validate_non_empty
+from sisap_light.procesamiento.parsers.html_tables import quick_html_data_signals
 
 CITY_VARIABLES = {
     ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS: ['may_precio_min', 'may_precio_prom', 'may_precio_max'],
@@ -143,17 +144,21 @@ def _tipo_mercado(modulo: ModuloSisap) -> str:
     return 'mayorista' if modulo == ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS else 'minorista'
 
 
-def _fetch_city_frames(extractor: SisapCiudadesExtractor, query: SisapQuery, modulo: ModuloSisap, save_raw: bool = False) -> pl.DataFrame:
+def _fetch_city_frames(
+    extractor: SisapCiudadesExtractor, query: SisapQuery, modulo: ModuloSisap, save_raw: bool = False
+) -> tuple[pl.DataFrame, str | None]:
     metric_frames: list[pl.DataFrame] = []
+    last_html: str | None = None
     for variable in _variables(modulo):
         report_html = extractor.fetch_report(query, variable=variable)
+        last_html = report_html
         if save_raw:
             save_html_snapshot(modulo, query, report_html, suffix=variable)
         frame = build_ciudades_metric_frame(report_html, query=query, metric_name=variable)
         metric_frames.append(frame)
     df = merge_ciudades_metrics(metric_frames)
     if df.is_empty():
-        return df
+        return df, last_html
 
     tipo_mercado = _tipo_mercado(modulo)
     missing_metric_exprs: list[pl.Expr] = []
@@ -200,12 +205,12 @@ def _fetch_city_frames(extractor: SisapCiudadesExtractor, query: SisapQuery, mod
             pl.col('precio_min_max').alias('precio_max'),
         ).drop(['precio_min_min', 'precio_min_prom', 'precio_min_max'])
 
-    return df
+    return df, last_html
 
 
 def _find_first_non_empty_report(extractor: SisapCiudadesExtractor, plan: list[SisapQuery], modulo: ModuloSisap) -> tuple[SisapQuery, pl.DataFrame]:
     for query in plan[:MAX_SAMPLE_QUERIES]:
-        df = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
+        df, _ = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
         if not df.is_empty():
             return query, df
     raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
@@ -262,8 +267,24 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
             )
             register_control_query(control_states, output_name, output_name, 'region', region['nombre'], query)
             try:
-                df = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
+                df, sample_html = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
                 if df.is_empty():
+                    sig = quick_html_data_signals(sample_html)
+                    logger.warning(
+                        'Sin resultados de {} para region={} producto={} codigo={} | '
+                        'HTML en data/raw/html/precio_diario_regiones (sufijos {}) | senales_ultima_respuesta={}',
+                        output_name,
+                        region['nombre'],
+                        query.producto_nombre,
+                        query.producto_codigo,
+                        '|'.join(_variables(modulo)),
+                        sig,
+                    )
+                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                        logger.warning(
+                            'El HTML de ciudades parece incluir tablas y fechas; si el portal muestra datos, '
+                            'revisar build_ciudades_metric_frame vs HTML actual.'
+                        )
                     register_control_success(
                         control_states,
                         output_name,

@@ -49,7 +49,7 @@ Pipeline ligero para extraer SISAP sin automatizacion de navegador, persistir la
 La configuracion por defecto ya esta pensada para ejecucion automatica:
 
 - `SISAP_MODO_CARGA=incremental`
-- `SISAP_MODULOS=volumen,precios,ciudades-mayoristas,ciudades-minoristas`
+- `SISAP_MODULOS=volumen,precios,regiones`
 - `SISAP_PROCEDENCIAS=all`
 - `SISAP_REGIONES=all`
 - `SISAP_FECHA_INICIO=2016-01-01`
@@ -97,10 +97,9 @@ Los wrappers `run_sisap_master.ps1` y `run_sisap_suite.ps1` se mantienen solo po
 En MinIO, con `DELTA_ENABLED=true`, cada dataset queda como tabla Delta con `_delta_log` y archivos `.parquet` particionados por `anio/mes`.
 
 ## Estructura esperada en bucket
-- `<BUCKET_NAME>/Landing/sisap/volumen_diario/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/Landing/sisap/precios_diarios/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/Landing/sisap/ciudades_precios_mayoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
-- `<BUCKET_NAME>/Landing/sisap/ciudades_precios_minoristas/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/volumen_diario_mercado_lima/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/precios_diarios_mercado_lima/procedencia=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
+- `<BUCKET_NAME>/Landing/sisap/precio_diario_regiones/region=<nombre>/producto=<nombre>/anio=YYYY/mes=MM/`
 - `<BUCKET_NAME>/Landing/sisap/control/ingesta_control/`
 - `<BUCKET_NAME>/Landing/sisap/control/ingesta_control_eventos/`
 

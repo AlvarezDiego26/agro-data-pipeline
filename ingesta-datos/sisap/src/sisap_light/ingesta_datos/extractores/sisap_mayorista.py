@@ -30,13 +30,19 @@ class SisapMayoristaExtractor:
 
     def build_payload(self, query: SisapQuery, home_html: str, variable: str = "volumen") -> dict[str, str]:
         hidden = extract_hidden_inputs(home_html)
-        post_id = extract_post_id(home_html) or hidden.get("postID", "")
         fecha_fin = query.fecha_fin.strftime("%d/%m/%Y")
         fecha_inicio = query.fecha_inicio.strftime("%d/%m/%Y")
-        semana = str((query.fecha_fin.timetuple().tm_yday - 1) // 7 + 1)
+        
+        # El portal usa la semana del anio de la fecha fin
+        _, week_num, _ = query.fecha_fin.isocalendar()
+        semana = str(week_num)
+
+        is_interval = query.fecha_inicio != query.fecha_fin
+        periodicidad = "intervalo" if is_interval else "dia"
 
         payload = {
-            "mercado": query.mercado_codigo or self.settings.sisap_mercado_codigo,
+            **hidden,
+            "mercado": query.mercado_codigo or "*",
             "variables[]": variable,
             "procedencias[]": query.procedencia_codigo or "",
             "fecha": fecha_fin,
@@ -46,25 +52,16 @@ class SisapMayoristaExtractor:
             "meses[]": query.fecha_fin.strftime("%m"),
             "semanas[]": semana,
             "productos[]": query.producto_codigo,
-            "producto": "NA",
-            "periodicidad": "intervalo",
-            "unMes": "",
-            "varFechaAnio": "",
-            "varFechaMes": "",
-            "varFechaSemana": "",
-            "varDiaAnterior": "",
-            "varMesAnioAnterior": "",
-            "varMesAnterior": "",
-            "checkANivelDiario": "",
-            "grafPromedioYDesvEs": "",
-            "grafPromedioYRango": "",
-            "__ajax_carga_final": hidden.get("__ajax_carga_final", "consulta"),
-            "postID": post_id,
+            "periodicidad": periodicidad,
+            "__ajax_carga_final": "consulta",
+            "ajax": "true",
         }
         return payload
+
 
     def fetch_report(self, query: SisapQuery, variable: str = "volumen") -> str:
         home_html = self.fetch_home()
         payload = self.build_payload(query=query, home_html=home_html, variable=variable)
         return self.client.post(self.report_url, data=payload)
+
 

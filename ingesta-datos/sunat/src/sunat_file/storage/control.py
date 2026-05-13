@@ -1,5 +1,5 @@
-from __future__ import annotations
-
+import os
+import time
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
@@ -36,6 +36,45 @@ CONTROL_DATETIME_COLUMNS = [
 ]
 CONTROL_EVENT_KEY_COLUMNS = ['evento_id']
 CONTROL_STATE_LOCK = RLock()
+
+
+class FileLock:
+    """Bloqueo simple basado en archivos para evitar concurrencia entre procesos Docker."""
+    def __init__(self, lock_path: Path, timeout: int = 60):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self.fd = None
+
+    def __enter__(self):
+        start_time = time.time()
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            try:
+                # Intentamos crear el archivo de forma exclusiva
+                self.fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                return self
+            except FileExistsError:
+                if time.time() - start_time > self.timeout:
+                    logger.warning(f"Timeout esperando bloqueo en {self.lock_path}. Forzando liberación.")
+                    try:
+                        self.lock_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.fd is not None:
+            os.close(self.fd)
+            try:
+                self.lock_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _get_lock(name: str) -> FileLock:
+    settings = get_settings()
+    lock_path = settings.control_dir / f"{name}.lock"
+    return FileLock(lock_path)
 
 
 def _control_uri() -> str:
@@ -109,8 +148,15 @@ def _read_local_control_state() -> pl.DataFrame:
         return pl.DataFrame()
     try:
         return _normalize_control_frame(pl.read_parquet(path))
-    except Exception:
-        logger.exception('No se pudo leer el cache local de control SUNAT en {}', path)
+    except Exception as e:
+        if "File out of specification" in str(e) or "PAR1" in str(e):
+            logger.error(f"Archivo de control CORRUPTO detectado en {path}. Eliminando para auto-recuperacion.")
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            logger.exception('No se pudo leer el cache local de control SUNAT en {}', path)
         return pl.DataFrame()
 
 
@@ -149,8 +195,15 @@ def _read_local_control_events() -> pl.DataFrame:
         return pl.DataFrame()
     try:
         return _normalize_control_frame(pl.read_parquet(path))
-    except Exception:
-        logger.exception('No se pudo leer el journal local de eventos SUNAT en {}', path)
+    except Exception as e:
+        if "File out of specification" in str(e) or "PAR1" in str(e):
+            logger.error(f"Journal de eventos CORRUPTO detectado en {path}. Eliminando para auto-recuperacion.")
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            logger.exception('No se pudo leer el journal local de eventos SUNAT en {}', path)
         return pl.DataFrame()
 
 
@@ -184,7 +237,7 @@ def _write_pending_control_events(events_df: pl.DataFrame) -> None:
 
 
 def read_control_table() -> pl.DataFrame:
-    with CONTROL_STATE_LOCK:
+    with CONTROL_STATE_LOCK, _get_lock("control_table"):
         settings = get_settings()
         table_uri = _control_uri()
         storage_options = settings.delta_storage_options
@@ -245,7 +298,7 @@ def list_scope_values_by_status(
 
 
 def upsert_control_records(records_df: pl.DataFrame) -> str:
-    with CONTROL_STATE_LOCK:
+    with CONTROL_STATE_LOCK, _get_lock("control_table"):
         if records_df.is_empty():
             return ''
 
@@ -293,7 +346,7 @@ def sync_pending_control_state() -> dict[str, object]:
 
 
 def append_control_events(events_df: pl.DataFrame) -> str:
-    with CONTROL_STATE_LOCK:
+    with CONTROL_STATE_LOCK, _get_lock("control_events"):
         if events_df.is_empty():
             return ''
 

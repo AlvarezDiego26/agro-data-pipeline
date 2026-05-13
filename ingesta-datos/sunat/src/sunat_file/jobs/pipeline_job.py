@@ -31,7 +31,7 @@ def run_pipeline_main() -> dict[str, object]:
     imported = run_import() if pending_files else []
     logger.info(f'Archivos ZIP importados: {len(imported)}')
     fresh = run_filter_agro()
-    logger.info(f'Registros base: {fresh.get("rows", 0)}')
+    logger.info(f'Registros base: {fresh.get("base_rows", 0)}')
     logger.info(f'Registros filtrados agrícolas: {fresh.get("rows", 0)}')
     logger.info(f'Ruta de extracción SUNAT: {settings.extraccion_dir}')
     logger.info(f'Ruta de consolidación agrícola: {settings.consolidacion_agricola_dir}')

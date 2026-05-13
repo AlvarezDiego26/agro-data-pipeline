@@ -29,7 +29,7 @@ class ModuleRunSpec:
 
 
 def _run_volumen(_: str) -> str:
-    return str(run_volumen_full(procedencia_nombre=_))
+    return str(run_volumen_full())
 
 
 def _run_precios(_: str) -> str:
@@ -44,20 +44,39 @@ def _run_ciudades_minoristas(_: str) -> str:
     return str(run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS, region_nombre=_))
 
 
+def _run_regiones(_: str) -> str:
+    mayoristas = str(
+        run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS, region_nombre=_)
+    )
+    minoristas = str(
+        run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS, region_nombre=_)
+    )
+    return f'mayoristas -> {mayoristas} | minoristas -> {minoristas}'
+
+
 def _module_specs() -> dict[str, ModuleRunSpec]:
     settings = get_settings()
     return {
         'volumen': ModuleRunSpec(
-            scope_name='procedencia',
-            iter_values_getter=lambda: settings.procedencias_resueltas,
+            scope_name='carga',
+            iter_values_getter=lambda: ['consolidado_por_mercado'],
             scope_attr='sisap_procedencia_nombre',
             runner=_run_volumen,
         ),
         'precios': ModuleRunSpec(
             scope_name='procedencia',
-            iter_values_getter=lambda: settings.procedencias_resueltas,
+            iter_values_getter=lambda: (
+                ['consolidado'] if settings.sisap_mercado_codigo == '*' 
+                else settings.procedencias_resueltas
+            ),
             scope_attr='sisap_procedencia_nombre',
             runner=_run_precios,
+        ),
+        'regiones': ModuleRunSpec(
+            scope_name='region',
+            iter_values_getter=lambda: settings.regiones_resueltas,
+            scope_attr='sisap_region_nombre',
+            runner=_run_regiones,
         ),
         'ciudades-mayoristas': ModuleRunSpec(
             scope_name='region',

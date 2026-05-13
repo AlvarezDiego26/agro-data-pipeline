@@ -13,6 +13,28 @@ PARTITION_FILE_NAME = "data.parquet"
 
 
 def save_parquet(df: pl.DataFrame, output_path: Path) -> None:
+    settings = get_settings()
+    if settings.is_minio:
+        s3_fs = _build_s3_filesystem()
+        
+        # Intentar calcular la ruta relativa al landing path para preservar carpetas (ej: exportaciones_filtradas/)
+        try:
+            relative_path = output_path.relative_to(settings.sunat_landing_dir).as_posix()
+        except ValueError:
+            # Si no es relativa, usar solo el nombre del archivo
+            relative_path = output_path.name
+
+        prefix = settings.sunat_minio_prefix.strip("/")
+        parts = [settings.minio_bucket]
+        if prefix:
+            parts.append(prefix)
+        
+        parts.append(relative_path)
+        object_path = "/".join(parts)
+        
+        _write_minio_parquet(s3_fs, object_path, df)
+        return
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(output_path)
 
@@ -29,18 +51,25 @@ def _build_s3_filesystem() -> fs.S3FileSystem:
     )
 
 
-def _build_minio_object_path(base_dir: Path, partition_folder: Path) -> str:
+def _build_minio_object_path(dataset_name: str, partition_folder: Path, base_dir: Path) -> str:
     settings = get_settings()
-    relative_base = base_dir.relative_to(settings.clean_dir).as_posix().strip("/")
-    relative_partition = partition_folder.relative_to(base_dir).as_posix().strip("/")
-    prefix = settings.minio_prefix.strip("/")
+    # Calculamos solo la parte de la particion (ej: anio=2026/mes=05)
+    try:
+        relative_partition = partition_folder.relative_to(base_dir).as_posix().strip("/")
+    except ValueError:
+        relative_partition = ""
+
+    prefix = settings.sunat_minio_prefix.strip("/")
     parts = [settings.minio_bucket]
     if prefix:
         parts.append(prefix)
-    if relative_base:
-        parts.append(relative_base)
+
+    # Usamos el nombre del dataset como carpeta principal
+    parts.append(dataset_name)
+
     if relative_partition:
         parts.append(relative_partition)
+
     parts.append(PARTITION_FILE_NAME)
     return "/".join(parts)
 
@@ -85,7 +114,7 @@ def save_partitioned_parquet(
 
         output_path = folder / PARTITION_FILE_NAME
         if settings.is_minio:
-            object_path = _build_minio_object_path(base_dir, folder)
+            object_path = _build_minio_object_path(dataset_name, folder, base_dir)
             existing_df = _read_minio_parquet(s3_fs, object_path)
             if existing_df is not None:
                 partition_df = deduplicate_dataset(

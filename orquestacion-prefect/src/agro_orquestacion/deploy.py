@@ -9,11 +9,8 @@ from prefect.types.entrypoint import EntrypointType
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
-    agro_ingesta_flow,
-    sisap_ciudades_mayoristas_flow,
-    sisap_ciudades_minoristas_flow,
-    sisap_master_flow,
     sisap_precios_flow,
+    sisap_regiones_flow,
     sisap_volumen_flow,
     sunat_main_flow,
 )
@@ -33,10 +30,18 @@ def _managed_pythonpath() -> str:
             "ingesta-datos/sunat/src",
         ]
     )
-def _interval_kwargs(enabled: bool, hours: int) -> dict[str, timedelta]:
+from prefect.client.schemas.schedules import IntervalSchedule, CronSchedule
+
+def _schedule_kwargs(enabled: bool, hours: int, is_sunat: bool = False, minute_offset: int = 0) -> dict[str, any]:
     if not enabled:
         return {}
-    return {"interval": timedelta(hours=hours)}
+    if is_sunat:
+        # SUNAT corre a las 00:05 y 12:05 para no chocar con el inicio de hora
+        return {"schedule": CronSchedule(cron=f"{5 + minute_offset} 0,12 * * *")}
+    
+    # SISAP corre cada 4 horas, pero escalonado por el minuto especificado
+    # Ejemplo: minuto 0, 10, 20...
+    return {"schedule": CronSchedule(cron=f"{minute_offset} */4 * * *")}
 
 
 def _build_source(settings) -> GitRepository:
@@ -97,7 +102,7 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sisap-precios-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -124,7 +129,7 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sisap-volumen-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=10),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -146,13 +151,13 @@ def _deploy_managed(settings) -> None:
         tags=["sisap", "managed", "volumen", "ingesta"],
     )
 
-    sisap_ciudades_mayoristas_flow.from_source(
+    sisap_regiones_flow.from_source(
         source=source,
-        entrypoint=_entrypoint("sisap_ciudades_mayoristas_flow"),
+        entrypoint=_entrypoint("sisap_regiones_flow"),
     ).deploy(
-        name="sisap-ciudades-mayoristas-managed",
+        name="sisap-regiones-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=20),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -169,47 +174,7 @@ def _deploy_managed(settings) -> None:
             "pip_packages": settings.prefect_requirements,
             "env": sisap_runtime_env,
         },
-        tags=["sisap", "managed", "ciudades", "mayoristas", "ingesta"],
-    )
-
-    sisap_ciudades_minoristas_flow.from_source(
-        source=source,
-        entrypoint=_entrypoint("sisap_ciudades_minoristas_flow"),
-    ).deploy(
-        name="sisap-ciudades-minoristas-managed",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
-        parameters={
-            "fecha_inicio": settings.sisap_fecha_inicio,
-            "fecha_fin": settings.sisap_fecha_fin or None,
-            "modo_carga": settings.sisap_modo_carga,
-            "regiones": settings.sisap_regiones,
-            "producto_codigo": settings.sisap_producto_codigo or None,
-            "producto_nombre": settings.sisap_producto_nombre or None,
-            "max_queries": settings.sisap_max_queries,
-            "scope_workers": settings.sisap_scope_max_workers,
-            "shard_workers": settings.sisap_shard_max_workers,
-            "product_batch_size": settings.sisap_product_batch_size,
-        },
-        job_variables={
-            "pip_packages": settings.prefect_requirements,
-            "env": sisap_runtime_env,
-        },
-        tags=["sisap", "managed", "ciudades", "minoristas", "ingesta"],
-    )
-
-    sisap_master_flow.from_source(
-        source=source,
-        entrypoint=_entrypoint("sisap_master_flow"),
-    ).deploy(
-        name="sisap-master-managed",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        job_variables={
-            "pip_packages": settings.prefect_requirements,
-            "env": sisap_runtime_env,
-        },
-        tags=["sisap", "managed", "master", "ingesta"],
-        entrypoint_type=EntrypointType.MODULE_PATH,
+        tags=["sisap", "managed", "regiones", "ingesta"],
     )
 
     sunat_main_flow.from_source(
@@ -218,7 +183,7 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sunat-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours, is_sunat=True),
         parameters={
             "fecha_corte_inicio": settings.sunat_fecha_corte_inicio,
             "fecha_corte_fin": settings.sunat_fecha_corte_fin or None,
@@ -231,21 +196,6 @@ def _deploy_managed(settings) -> None:
         tags=["sunat", "managed", "ingesta"],
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
-
-    agro_ingesta_flow.from_source(
-        source=source,
-        entrypoint=_entrypoint("agro_ingesta_flow"),
-    ).deploy(
-        name="agro-managed",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        job_variables={
-            "pip_packages": settings.prefect_requirements,
-            "env": sisap_runtime_env,
-        },
-        tags=["agro", "managed", "ingesta"],
-        entrypoint_type=EntrypointType.MODULE_PATH,
-    )
-
 
 def _deploy_process(settings) -> None:
     runtime_pythonpath = str(settings.orquestacion_root / "src")
@@ -262,7 +212,7 @@ def _deploy_process(settings) -> None:
     sisap_precios = sisap_precios_flow.to_deployment(
         name="sisap-precios-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -283,7 +233,7 @@ def _deploy_process(settings) -> None:
     sisap_volumen = sisap_volumen_flow.to_deployment(
         name="sisap-volumen-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=10),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -303,10 +253,10 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
-    sisap_ciudades_mayoristas = sisap_ciudades_mayoristas_flow.to_deployment(
-        name="sisap-ciudades-mayoristas-local",
+    sisap_regiones = sisap_regiones_flow.to_deployment(
+        name="sisap-regiones-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=20),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -320,43 +270,14 @@ def _deploy_process(settings) -> None:
             "product_batch_size": settings.sisap_product_batch_size,
         },
         job_variables=sisap_job_variables,
-        tags=["sisap", "local", "ciudades", "mayoristas", "ingesta"],
-        entrypoint_type=EntrypointType.MODULE_PATH,
-    )
-
-    sisap_ciudades_minoristas = sisap_ciudades_minoristas_flow.to_deployment(
-        name="sisap-ciudades-minoristas-local",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
-        parameters={
-            "fecha_inicio": settings.sisap_fecha_inicio,
-            "fecha_fin": settings.sisap_fecha_fin or None,
-            "modo_carga": settings.sisap_modo_carga,
-            "regiones": settings.sisap_regiones,
-            "producto_codigo": settings.sisap_producto_codigo or None,
-            "producto_nombre": settings.sisap_producto_nombre or None,
-            "max_queries": settings.sisap_max_queries,
-            "scope_workers": settings.sisap_scope_max_workers,
-            "shard_workers": settings.sisap_shard_max_workers,
-            "product_batch_size": settings.sisap_product_batch_size,
-        },
-        job_variables=sisap_job_variables,
-        tags=["sisap", "local", "ciudades", "minoristas", "ingesta"],
-        entrypoint_type=EntrypointType.MODULE_PATH,
-    )
-
-    sisap_master = sisap_master_flow.to_deployment(
-        name="sisap-master-local",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        job_variables=sisap_job_variables,
-        tags=["sisap", "local", "master", "ingesta"],
+        tags=["sisap", "local", "regiones", "ingesta"],
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
     sunat_main = sunat_main_flow.to_deployment(
         name="sunat-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_interval_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours),
+        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours, is_sunat=True),
         parameters={
             "fecha_corte_inicio": settings.sunat_fecha_corte_inicio,
             "fecha_corte_fin": settings.sunat_fecha_corte_fin or None,
@@ -367,22 +288,11 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
-    agro_ingesta = agro_ingesta_flow.to_deployment(
-        name="agro-local",
-        work_pool_name=settings.prefect_target_work_pool_name,
-        job_variables=sisap_job_variables,
-        tags=["agro", "local", "process", "ingesta"],
-        entrypoint_type=EntrypointType.MODULE_PATH,
-    )
-
     deploy_runner(
         sisap_precios,
         sisap_volumen,
-        sisap_ciudades_mayoristas,
-        sisap_ciudades_minoristas,
-        sisap_master,
+        sisap_regiones,
         sunat_main,
-        agro_ingesta,
         work_pool_name=settings.prefect_target_work_pool_name,
         build=False,
         push=False,

@@ -1,4 +1,4 @@
-﻿from datetime import date
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     sunat_modo_carga: str = 'incremental'
     sunat_incremental_overlap_dias: int = 0
     sunat_use_control_table: bool = True
-    sunat_control_dataset: str = 'control/control_state.parquet'
-    sunat_control_events_dataset: str = 'control/control_events_local.parquet'
+    sunat_control_dataset: str = 'control_state.parquet'
+    sunat_control_events_dataset: str = 'control_events_local.parquet'
     sunat_inbox_dir: Path = Path('data/inbox/sunat')
     sunat_processed_dir: Path = Path('data/processed/sunat')
     sunat_error_dir: Path = Path('data/error/sunat')
@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     minio_endpoint: str = 'http://minio-api:9000'
     minio_access_key: str = ''
     minio_secret_key: str = ''
-    minio_bucket: str = 'nombre-del-bucket'
+    minio_bucket: str = 'agro-productos'
     minio_region: str = 'us-east-1'
-    minio_prefix: str = 'Landing/sunat'
+    sunat_minio_prefix: str = 'Landing/sunat'
 
     @property
     def base_dir(self) -> Path:
@@ -62,11 +62,15 @@ class Settings(BaseSettings):
 
     @property
     def extraccion_dir(self) -> Path:
-        return self.sunat_landing_dir / 'extraccion'
+        return self.sunat_landing_dir / 'sunat_exportaciones_base'
+
+    @property
+    def exportaciones_filtradas_dir(self) -> Path:
+        return self.sunat_landing_dir / 'exportaciones_filtradas'
 
     @property
     def consolidacion_agricola_dir(self) -> Path:
-        return self.sunat_landing_dir / 'consolidacion_agricola'
+        return self.exportaciones_filtradas_dir
 
     @property
     def clean_delta_dir(self) -> Path:
@@ -107,27 +111,31 @@ class Settings(BaseSettings):
     @property
     def delta_storage_options(self) -> dict[str, str] | None:
         if not self.is_minio:
-            return None
+            return {
+                'allow_unsafe_rename': 'true',
+            }
         return {
             'AWS_ENDPOINT_URL': self.minio_endpoint,
             'AWS_ACCESS_KEY_ID': self.minio_access_key,
             'AWS_SECRET_ACCESS_KEY': self.minio_secret_key,
             'AWS_REGION': self.minio_region,
-            'AWS_ALLOW_HTTP': 'true' if self.minio_endpoint.startswith('http://') else 'false',
             'AWS_S3_ALLOW_UNSAFE_RENAME': 'true',
+            'AWS_ALLOW_HTTP': 'true' if self.minio_endpoint.startswith('http://') else 'false',
         }
 
     def build_delta_uri(self, dataset_name: str) -> str:
-        if dataset_name.startswith('control/'):
-            # For control, return file URI
+        # Si es un archivo de control, usamos la carpeta de control
+        if 'control' in dataset_name or 'pending' in dataset_name:
             if self.is_minio:
-                prefix = self.minio_prefix.strip('/')
+                prefix = self.sunat_minio_prefix.strip('/')
+                target = f'control/{Path(dataset_name).name}'
                 if prefix:
-                    return f's3://{self.minio_bucket}/{prefix}/{dataset_name}'
-                return f's3://{self.minio_bucket}/{dataset_name}'
-            return str(self.base_dir / dataset_name)
+                    return f's3://{self.minio_bucket}/{prefix}/{target}'
+                return f's3://{self.minio_bucket}/{target}'
+            return str(self.control_dir / Path(dataset_name).name)
+
         if self.is_minio:
-            prefix = self.minio_prefix.strip('/')
+            prefix = self.sunat_minio_prefix.strip('/')
             if prefix:
                 return f's3://{self.minio_bucket}/{prefix}/{dataset_name}'
             return f's3://{self.minio_bucket}/{dataset_name}'

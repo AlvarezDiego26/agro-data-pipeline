@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import polars as pl
+from loguru import logger
 
 from sunat_file.catalogs.agro_productos import (
     AGRO_HS_CHAPTERS,
@@ -165,11 +166,13 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
         chapter = str(part_nandi or "")[:2]
         text_parts = [row.get("dcom"), row.get("dmer2"), row.get("dmer3"), row.get("dmer4"), row.get("dmer5")]
         search_text = normalize_text(" ".join(str(part or "") for part in text_parts))
+        
         if _should_exclude(search_text):
             continue
 
         product_match = _match_product(search_text)
         producto_id = str(product_match["producto_id"]) if product_match and product_match["producto_id"] is not None else None
+        
         if chapter not in AGRO_HS_CHAPTERS:
             continue
         if product_match is None:

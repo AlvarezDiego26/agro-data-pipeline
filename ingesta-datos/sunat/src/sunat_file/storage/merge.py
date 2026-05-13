@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import polars as pl
 
 DATASET_BUSINESS_KEYS = {
-    "sunat_exportaciones_base": ["registro_hash_fuente"],
+    "base_agro_delta": ["registro_hash_fuente"],
     "sunat_exportaciones_agrarias_frescas": ["registro_hash_fuente"],
 }
 

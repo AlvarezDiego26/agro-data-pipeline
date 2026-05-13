@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sisap_light.schemas import ModuloSisap
 
 from datetime import date, timedelta
 import unicodedata
@@ -26,6 +27,7 @@ from sisap_light.procesamiento.storage.merge import business_key_columns
 
 _CONTROL_STATUS_CACHE: dict[tuple[str, str, str, str, str, str, str], dict[str, object] | None] = {}
 _CONTROL_READ_DISABLED = False
+_LEGACY_VOLUMEN_BOUNDS_CACHE: dict[str, tuple[date | None, date | None]] = {}
 
 
 def _mercado_control_value(mercado_codigo: str | None) -> str:
@@ -137,6 +139,8 @@ def resolve_productos(producto_codigo: str | None, producto_nombre: str | None) 
 
 def resolve_mercados(mercado_codigo: str | None, mercado_nombre: str | None) -> list[dict]:
     if mercado_codigo:
+        if mercado_codigo == '*':
+            return [{'codigo': '*', 'nombre': 'Todos los mercados'}]
         mercado = find_by_codigo(MERCADOS_SISAP, mercado_codigo)
         if mercado is None:
             raise ValueError('No se pudo resolver el mercado por codigo.')
@@ -201,8 +205,10 @@ def apply_producto_filters(productos: list[dict]) -> list[dict]:
 
 
 def discover_productos_mercado_mayorista(mercado_codigo: str) -> list[dict]:
-    from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
+    if mercado_codigo == '*':
+        return []
 
+    from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
     extractor = SisapMayoristaExtractor()
     html = extractor.fetch_productos_por_mercado_html(mercado_codigo)
     from sisap_light.procesamiento.parsers.html_forms import extract_checkbox_products
@@ -297,6 +303,8 @@ def _get_delta_consolidated_bounds(
             lf = lf.filter(pl.col('procedencia') == scope_value)
         elif scope_label == 'region':
             lf = lf.filter(pl.col('region') == scope_value)
+        elif scope_label == 'volumen_mercado' and 'mercado_codigo' in schema_cols:
+            lf = lf.filter(pl.col('mercado_codigo') == scope_value)
         # Tablas antiguas sin mercado_codigo: no filtrar (bounds menos precisos, migra con primera escritura nueva).
         if mercado_codigo and 'mercado_codigo' in schema_cols:
             lf = lf.filter(pl.col('mercado_codigo') == mercado_codigo)
@@ -335,6 +343,12 @@ def _get_local_parquet_date_bounds(base_dir: Path) -> tuple[date | None, date | 
         except Exception:
             continue
     return minima, maxima
+
+
+def _merge_date_bounds(rows: list[tuple[date | None, date | None]]) -> tuple[date | None, date | None]:
+    mins = [r[0] for r in rows if r[0] is not None]
+    maxs = [r[1] for r in rows if r[1] is not None]
+    return (min(mins) if mins else None, max(maxs) if maxs else None)
 
 
 def get_loaded_date_bounds(
@@ -436,7 +450,7 @@ def resolve_query_dates(
     if min_loaded is not None and min_loaded <= fecha_inicio and not history_complete:
         logger.info(
             'Se infirio historico completo desde la data escrita para {} {} producto={}. '
-            'El flag legacy no era confiable, pero la cobertura ya arranca en {}.',
+            'La cobertura ya arranca en {}.',
             output_name,
             scope_value,
             producto_codigo,
@@ -464,9 +478,10 @@ def expand_mayorista_plan_for_procedencia(
     output_name: str,
     modulo: 'ModuloSisap',
     mercado: dict,
-    procedencia: dict,
+    procedencia: dict | None,
     productos_override: list[dict] | None = None,
 ) -> list['SisapQuery']:
+    """procedencia=None: volumen consolidado por mercado (sin filtro procedencias[] en SISAP)."""
     from sisap_light.ingesta_datos.planners import build_mayorista_queries
     from sisap_light.schemas import SisapQuery
 
@@ -476,13 +491,23 @@ def expand_mayorista_plan_for_procedencia(
     else:
         productos_mercado = resolve_productos_for_mercado_mayorista(mercado['codigo'])
 
+    if procedencia is None:
+        scope_label = 'volumen_mercado'
+        m_code = str(mercado['codigo'])
+        scope_value = 'consolidado' if m_code == '*' else m_code
+        proc_code: str | None = None
+    else:
+        scope_label = 'procedencia'
+        scope_value = procedencia['nombre']
+        proc_code = procedencia['codigo']
+
     plan: list[SisapQuery] = []
     for producto in productos_mercado:
         resolved_dates = resolve_query_dates(
             control_modulo=control_modulo,
             output_name=output_name,
-            scope_label='procedencia',
-            scope_value=procedencia['nombre'],
+            scope_label=scope_label,
+            scope_value=scope_value,
             producto_codigo=producto['codigo'],
             producto_nombre=producto['nombre'],
             fecha_inicio=settings.fecha_inicio_resuelta,
@@ -498,7 +523,7 @@ def expand_mayorista_plan_for_procedencia(
                 modulo=modulo,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
-                procedencia_codigo=procedencia['codigo'],
+                procedencia_codigo=proc_code,
                 mercado_codigo=mercado['codigo'],
                 mercado_nombre=mercado['nombre'],
                 productos=[producto],

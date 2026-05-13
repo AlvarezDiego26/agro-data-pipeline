@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     prefect_work_pool_name: str = ""
     prefect_managed_work_pool_name: str = "agro-managed-pool"
     prefect_process_work_pool_name: str = "agro-process-pool"
-    prefect_sunat_interval_hours: int = 6
+    prefect_sunat_interval_hours: int = 12
     prefect_sisap_master_interval_hours: int = 4
-    prefect_enable_schedules: bool = False
+    prefect_enable_schedules: bool = True
     prefect_enable_sisap: bool = True
     prefect_enable_sunat: bool = True
     prefect_sisap_timeout_minutes: int = 240
@@ -39,17 +39,20 @@ class Settings(BaseSettings):
     minio_region: str = "us-east-1"
 
     sisap_minio_prefix: str = "Landing/sisap"
+    sisap_control_dataset: str = "control/ingesta_control"
+    sisap_control_events_dataset: str = "control/ingesta_control_eventos"
     sunat_minio_prefix: str = "Landing/sunat"
 
     sisap_fecha_inicio: str = "2016-01-01"
     sisap_fecha_fin: str = ""
     sisap_modo_carga: str = "incremental"
-    sisap_modulos: str = "volumen,precios,ciudades-mayoristas,ciudades-minoristas"
+    sisap_modulos: str = "volumen,precios,regiones"
     sisap_procedencias: str = "all"
     sisap_regiones: str = "all"
     sisap_productos: str = "all"
     sisap_mercado_codigo: str = ""
     sisap_mercado_nombre: str = ""
+    sisap_mercados: str = "all"
     sisap_producto_codigo: str = ""
     sisap_producto_nombre: str = ""
     sisap_use_control_table: bool = True
@@ -121,6 +124,8 @@ class Settings(BaseSettings):
             "MINIO_BUCKET": self.minio_bucket,
             "MINIO_REGION": self.minio_region,
             "MINIO_PREFIX": self.sisap_minio_prefix,
+            "SISAP_CONTROL_DATASET": self.sisap_control_dataset,
+            "SISAP_CONTROL_EVENTS_DATASET": self.sisap_control_events_dataset,
             "SISAP_FECHA_INICIO": self.sisap_fecha_inicio,
             "SISAP_FECHA_FIN": self.sisap_fecha_fin,
             "SISAP_MODO_CARGA": self.sisap_modo_carga,
@@ -129,6 +134,7 @@ class Settings(BaseSettings):
             "SISAP_REGIONES": self.sisap_regiones,
             "SISAP_MERCADO_CODIGO": self.sisap_mercado_codigo,
             "SISAP_MERCADO_NOMBRE": self.sisap_mercado_nombre,
+            "SISAP_MERCADOS": self.sisap_mercados,
             "SISAP_PRODUCTO_CODIGO": self.sisap_producto_codigo,
             "SISAP_PRODUCTO_NOMBRE": self.sisap_producto_nombre,
             "SISAP_SCOPE_MAX_WORKERS": str(self.sisap_scope_max_workers),

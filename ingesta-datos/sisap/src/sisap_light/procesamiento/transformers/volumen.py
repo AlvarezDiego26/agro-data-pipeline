@@ -12,29 +12,55 @@ def build_volumen_frame(rows: list[list[str]], query: SisapQuery | None = None) 
 
     header, *data = rows
     df = pl.DataFrame(data, schema=header, orient="row")
-    first_column = df.columns[0]
-    if first_column != "Fecha":
-        df = df.rename({first_column: "Fecha"})
 
-    value_columns = [col for col in df.columns if col != "Fecha"]
-    if not value_columns:
-        return pl.DataFrame()
+    # Caso 1: Estructura Snapshot (Producto, Variedad, Volumen, Procedencia)
+    if "Producto" in df.columns and "Variedad" in df.columns:
+        mapping = {"Variedad": "variedad"}
+        if "Provincia de Procedencia" in df.columns:
+            mapping["Provincia de Procedencia"] = "procedencia"
+        
+        # Buscamos la columna de volumen (ej: 'Volumen (t)')
+        vol_cols = [c for c in df.columns if "volumen" in c.lower()]
+        if vol_cols:
+            mapping[vol_cols[0]] = "volumen_ton"
+        
+        df = df.rename(mapping)
+        melted = df
+    else:
+        # Caso 2: Estructura Pivoteada (Fecha, Producto1__Proc1, Producto1__Proc2...)
+        first_column = df.columns[0]
+        if first_column != "Fecha":
+            df = df.rename({first_column: "Fecha"})
 
-    melted = df.unpivot(
-        index="Fecha",
-        on=value_columns,
-        variable_name="producto_procedencia",
-        value_name="volumen_ton",
-    )
+        value_columns = [col for col in df.columns if col != "Fecha"]
+        if not value_columns:
+            return pl.DataFrame()
 
+        melted = df.unpivot(
+            index="Fecha",
+            on=value_columns,
+            variable_name="producto_procedencia",
+            value_name="volumen_ton",
+        )
+
+        melted = melted.with_columns(
+            pl.when(pl.col('producto_procedencia').str.contains('__'))
+            .then(pl.col('producto_procedencia').str.split('__').list.get(0))
+            .otherwise(pl.col('producto_procedencia'))
+            .alias('variedad'),
+            pl.when(pl.col('producto_procedencia').str.contains('__'))
+            .then(pl.col('producto_procedencia').str.split('__').list.get(1).fill_null('Total'))
+            .otherwise(pl.lit('Consolidado'))
+            .alias('procedencia'),
+        ).drop("producto_procedencia")
+
+    # Limpieza y tipado
     melted = melted.with_columns(
-        pl.col("producto_procedencia").str.split("__").list.get(0).alias("variedad"),
-        pl.col("producto_procedencia").str.split("__").list.get(1).fill_null("Total").alias("procedencia"),
         pl.when(pl.col("volumen_ton").is_in(list(EMPTY_MARKERS)))
         .then(None)
         .otherwise(pl.col("volumen_ton"))
         .alias("volumen_ton"),
-    ).drop("producto_procedencia")
+    )
 
     melted = melted.with_columns(
         pl.col("Fecha").str.strptime(pl.Date, format="%d/%m/%Y", strict=False).alias("fecha"),
@@ -74,4 +100,5 @@ def build_volumen_frame(rows: list[list[str]], query: SisapQuery | None = None) 
         if col in melted.columns
     ]
     return melted.select(ordered)
+
 

@@ -7,9 +7,8 @@ from prefect.runner import Runner
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
-    sisap_ciudades_mayoristas_flow,
-    sisap_ciudades_minoristas_flow,
     sisap_precios_flow,
+    sisap_regiones_flow,
     sisap_volumen_flow,
     sunat_main_flow,
 )
@@ -60,8 +59,8 @@ async def _serve() -> None:
         },
         tags=["sisap", "volumen", "ingesta"],
     )
-    sisap_ciudades_mayoristas = sisap_ciudades_mayoristas_flow.to_deployment(
-        name="sisap-ciudades-mayoristas-cada-4-horas",
+    sisap_regiones = sisap_regiones_flow.to_deployment(
+        name="sisap-regiones-cada-4-horas",
         interval=timedelta(hours=settings.prefect_sisap_master_interval_hours),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
@@ -75,24 +74,7 @@ async def _serve() -> None:
             "shard_workers": settings.sisap_shard_max_workers,
             "product_batch_size": settings.sisap_product_batch_size,
         },
-        tags=["sisap", "ciudades", "mayoristas", "ingesta"],
-    )
-    sisap_ciudades_minoristas = sisap_ciudades_minoristas_flow.to_deployment(
-        name="sisap-ciudades-minoristas-cada-4-horas",
-        interval=timedelta(hours=settings.prefect_sisap_master_interval_hours),
-        parameters={
-            "fecha_inicio": settings.sisap_fecha_inicio,
-            "fecha_fin": settings.sisap_fecha_fin or None,
-            "modo_carga": settings.sisap_modo_carga,
-            "regiones": settings.sisap_regiones,
-            "producto_codigo": settings.sisap_producto_codigo or None,
-            "producto_nombre": settings.sisap_producto_nombre or None,
-            "max_queries": settings.sisap_max_queries,
-            "scope_workers": settings.sisap_scope_max_workers,
-            "shard_workers": settings.sisap_shard_max_workers,
-            "product_batch_size": settings.sisap_product_batch_size,
-        },
-        tags=["sisap", "ciudades", "minoristas", "ingesta"],
+        tags=["sisap", "regiones", "ingesta"],
     )
     sunat_deployment = sunat_main_flow.to_deployment(
         name="sunat-cada-6-horas",
@@ -102,8 +84,7 @@ async def _serve() -> None:
 
     await runner.add_deployment(sisap_precios)
     await runner.add_deployment(sisap_volumen)
-    await runner.add_deployment(sisap_ciudades_mayoristas)
-    await runner.add_deployment(sisap_ciudades_minoristas)
+    await runner.add_deployment(sisap_regiones)
     await runner.add_deployment(sunat_deployment)
     await runner.start()
 

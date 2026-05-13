@@ -23,7 +23,7 @@ from sisap_light.jobs.common import (
     resolve_query_dates,
 )
 from sisap_light.jobs.parallel import build_grouped_shards, run_shards
-from sisap_light.procesamiento.parsers.html_tables import extract_report_titles, extract_tables
+from sisap_light.procesamiento.parsers.html_tables import extract_report_titles, detect_primary_table, quick_html_data_signals
 from sisap_light.schemas import ModuloSisap, SisapQuery
 from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
@@ -61,7 +61,7 @@ def _build_raw_plan(
     procedencia_nombre: str | None = None,
     productos_override: list[dict] | None = None,
 ) -> list[SisapQuery]:
-    procedencia = _resolve_procedencia(procedencia_nombre)
+    procedencia = _resolve_procedencia(procedencia_nombre) if (procedencia_nombre and procedencia_nombre != 'consolidado') else None
     mercados = iter_mercados_ejecucion(mercado_nombre)
     plan: list[SisapQuery] = []
     for mercado in mercados:
@@ -83,25 +83,27 @@ def build_plan(mercado_nombre: str | None = None) -> list[SisapQuery]:
     return filter_plan(_build_raw_plan(mercado_nombre), settings.sisap_max_queries)
 
 
-def _fetch_price_frames(extractor: SisapMayoristaExtractor, query: SisapQuery, save_raw: bool = False) -> tuple[pl.DataFrame, dict[str, list[str]]]:
+def _fetch_price_frames(extractor: SisapMayoristaExtractor, query: SisapQuery, save_raw: bool = False) -> tuple[pl.DataFrame, dict[str, list[str]], str | None]:
     metric_frames: list[pl.DataFrame] = []
     titles_by_metric: dict[str, list[str]] = {}
+    last_html: str | None = None
 
     for variable in PRICE_VARIABLES:
         report_html = extractor.fetch_report(query, variable=variable)
+        last_html = report_html
         titles_by_metric[variable] = extract_report_titles(report_html)
         if save_raw:
             save_html_snapshot(ModuloSisap.MAYORISTA_PRECIOS, query, report_html, suffix=variable)
-        rows = extract_tables(report_html)
+        rows = detect_primary_table(report_html)
         frame = build_precio_metric_frame(rows, query=query, metric_name=variable)
         metric_frames.append(frame)
 
-    return merge_precio_metrics(metric_frames), titles_by_metric
+    return merge_precio_metrics(metric_frames), titles_by_metric, last_html
 
 
 def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[SisapQuery]) -> tuple[SisapQuery, pl.DataFrame, dict[str, list[str]]]:
     for query in plan[:MAX_SAMPLE_QUERIES]:
-        df, titles = _fetch_price_frames(extractor, query, save_raw=True)
+        df, titles, _ = _fetch_price_frames(extractor, query, save_raw=True)
         if not df.is_empty():
             return query, df, titles
     raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
@@ -121,23 +123,42 @@ def run_sample(mercado_nombre: str | None = None) -> Path:
     return output
 
 
+def _precios_control_scope(query: SisapQuery) -> tuple[str, str]:
+    # Si mercado es '*', usamos consolidado por mercado
+    # Si procedencia es None, es consolidado de procedencias
+    m_code = str(query.mercado_codigo or '')
+    if m_code == '*':
+        return 'volumen_mercado', 'consolidado'
+    
+    # Por defecto usamos procedencia (comportamiento original)
+    return 'procedencia', query.procedencia_nombre or 'desconocida'
+
+
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
-    procedencia = _resolve_procedencia(procedencia_nombre)
-    plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre']), settings.sisap_max_queries)
+    
+    # Si el mercado es '*', forzamos procedencia=None para reporte consolidado
+    if settings.sisap_mercado_codigo == '*':
+        procedencia = None
+        scope_label, scope_value = 'volumen_mercado', 'consolidado'
+    else:
+        procedencia = _resolve_procedencia(procedencia_nombre)
+        scope_label, scope_value = 'procedencia', procedencia['nombre']
+
+    plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre'] if procedencia else None), settings.sisap_max_queries)
     if not plan:
         logger.info('No hay queries pendientes para precios.')
-        return build_scope_output_dir('precios_diarios_mercado_lima', 'procedencia', procedencia['nombre'])
+        return build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
 
     errores: list[dict[str, str]] = []
-    output = build_scope_output_dir('precios_diarios_mercado_lima', 'procedencia', procedencia['nombre'])
+    output = build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
 
     shards = build_grouped_shards(
         plan,
         group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
         chunk_size=settings.product_batch_size,
-        shard_prefix=f'precios-{procedencia["codigo"]}',
+        shard_prefix=f'precios-{scope_value}',
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
@@ -154,24 +175,39 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 query.producto_nombre,
                 query.producto_codigo,
             )
-            register_control_query(control_states, 'precios', 'precios_diarios_mercado_lima', 'procedencia', procedencia['nombre'], query)
+            register_control_query(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
             try:
-                df, _ = _fetch_price_frames(extractor, query, save_raw=True)
+                df, _, sample_html = _fetch_price_frames(extractor, query, save_raw=True)
                 if df.is_empty():
+                    sig = quick_html_data_signals(sample_html)
+                    logger.warning(
+                        'Sin resultados de precios para mercado={} producto={} codigo={} | '
+                        'HTML por metrica en data/raw/html/{} (sufijos precio_min|prom|max) | senales_ultima_respuesta={}',
+                        query.mercado_codigo,
+                        query.producto_nombre,
+                        query.producto_codigo,
+                        ModuloSisap.MAYORISTA_PRECIOS.value,
+                        sig,
+                    )
+                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                        logger.warning(
+                            'El HTML de precios parece incluir tablas y fechas; si el portal muestra datos, '
+                            'revisar build_precio_metric_frame / detect_primary_table vs estructura actual del portal.'
+                        )
                     register_control_success(
                         control_states,
                         'precios',
                         'precios_diarios_mercado_lima',
-                        'procedencia',
-                        procedencia['nombre'],
+                        scope_label,
+                        scope_value,
                         query,
                         estado='empty',
                     )
                     event_row = build_control_event_row(
                         'precios',
                         'precios_diarios_mercado_lima',
-                        'procedencia',
-                        procedencia['nombre'],
+                        scope_label,
+                        scope_value,
                         query,
                         'empty',
                         'sin_resultados',
@@ -194,15 +230,15 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     output_name='precios_diarios_mercado_lima',
                     expected_columns=EXPECTED_COLUMNS,
                     sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                    scope_label='procedencia',
-                    scope_value=procedencia['nombre'],
+                    scope_label=scope_label,
+                    scope_value=scope_value,
                 )
-                register_control_success(control_states, 'precios', 'precios_diarios_mercado_lima', 'procedencia', procedencia['nombre'], query)
+                register_control_success(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
                 event_row = build_control_event_row(
                     'precios',
                     'precios_diarios_mercado_lima',
-                    'procedencia',
-                    procedencia['nombre'],
+                    scope_label,
+                    scope_value,
                     query,
                     'success',
                 )
@@ -210,12 +246,12 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 persist_control_states(control_states)
             except Exception as exc:
                 logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', 'procedencia', procedencia['nombre'], query, str(exc))
+                register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query, str(exc))
                 event_row = build_control_event_row(
                     'precios',
                     'precios_diarios_mercado_lima',
-                    'procedencia',
-                    procedencia['nombre'],
+                    scope_label,
+                    scope_value,
                     query,
                     'error',
                     str(exc),
@@ -236,7 +272,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         shards,
         process_shard,
         max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
-        label=f'precios/procedencia={procedencia["nombre"]}',
+        label=f'precios/procedencia={procedencia["nombre"] if procedencia else "consolidado"}',
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)

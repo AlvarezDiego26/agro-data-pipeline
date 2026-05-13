@@ -3,7 +3,6 @@ from pathlib import Path
 import polars as pl
 from loguru import logger
 
-from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
@@ -19,7 +18,6 @@ from sisap_light.jobs.common import (
     register_control_failure,
     register_control_query,
     register_control_success,
-    resolve_item,
 )
 from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_forms import (
@@ -30,7 +28,11 @@ from sisap_light.procesamiento.parsers.html_forms import (
     extract_procedencia_options,
     extract_variable_options,
 )
-from sisap_light.procesamiento.parsers.html_tables import detect_primary_table, extract_report_titles
+from sisap_light.procesamiento.parsers.html_tables import (
+    detect_primary_table,
+    extract_report_titles,
+    quick_html_data_signals,
+)
 from sisap_light.schemas import ModuloSisap, SisapQuery
 from sisap_light.procesamiento.storage.parquet import save_parquet
 from sisap_light.procesamiento.storage.raw import save_html_snapshot
@@ -50,14 +52,11 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 
 
-def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
-    settings = get_settings()
-    return resolve_item(
-        PROCEDENCIAS_SISAP,
-        settings.sisap_procedencia_codigo,
-        procedencia_nombre or settings.sisap_procedencia_nombre,
-        'la procedencia',
-    )
+def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
+    mercado = str(query.mercado_codigo or '')
+    if mercado == '*':
+        mercado = 'consolidado'
+    return 'volumen_mercado', mercado
 
 
 def inspect_home() -> dict:
@@ -87,10 +86,8 @@ def inspect_home_mercado(mercado_codigo: str) -> dict:
 
 def _build_raw_plan(
     mercado_nombre: str | None = None,
-    procedencia_nombre: str | None = None,
     productos_override: list[dict] | None = None,
 ) -> list[SisapQuery]:
-    procedencia = _resolve_procedencia(procedencia_nombre)
     mercados = iter_mercados_ejecucion(mercado_nombre)
     plan: list[SisapQuery] = []
     for mercado in mercados:
@@ -100,7 +97,7 @@ def _build_raw_plan(
                 output_name='volumen_diario_mercado_lima',
                 modulo=ModuloSisap.MAYORISTA_VOLUMEN,
                 mercado=mercado,
-                procedencia=procedencia,
+                procedencia=None,
                 productos_override=productos_override,
             )
         )
@@ -146,21 +143,21 @@ def run_sample() -> Path:
 
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
-    procedencia = _resolve_procedencia(procedencia_nombre)
-    plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre']), settings.sisap_max_queries)
+    _ = procedencia_nombre
+    plan = filter_plan(_build_raw_plan(mercado_nombre), settings.sisap_max_queries)
     if not plan:
         logger.info('No hay queries pendientes para volumen.')
-        return build_scope_output_dir('volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'])
+        return build_scope_output_dir('volumen_diario_mercado_lima', 'volumen_mercado', 'consolidado')
 
     errores: list[dict[str, str]] = []
-    output = build_scope_output_dir('volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'])
+    output = build_scope_output_dir('volumen_diario_mercado_lima', 'volumen_mercado', 'consolidado')
     output.mkdir(parents=True, exist_ok=True)
 
     shards = build_grouped_shards(
         plan,
         group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
         chunk_size=settings.product_batch_size,
-        shard_prefix=f'volumen-{procedencia["codigo"]}',
+        shard_prefix='volumen-consolidada',
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
@@ -177,36 +174,47 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 query.producto_nombre,
                 query.producto_codigo,
             )
-            register_control_query(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query)
+            sl, sv = _volumen_control_scope(query)
+            register_control_query(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
             try:
                 report_html = extractor.fetch_report(query, variable='volumen')
+                snap_path = save_html_snapshot(
+                    ModuloSisap.MAYORISTA_VOLUMEN, query, report_html, suffix='fetched'
+                )
                 df = _normalize_report(query, report_html)
-                save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
 
                 if df.is_empty():
+                    sig = quick_html_data_signals(report_html)
                     logger.warning(
-                        'Sin resultados de volumen para mercado={} procedencia={} producto={} codigo={} rango={}..{}',
+                        'Sin resultados de volumen para mercado={} producto={} codigo={} rango={}..{} '
+                        '| HTML bruto en {} | senales={}',
                         query.mercado_codigo,
-                        procedencia['nombre'],
                         query.producto_nombre,
                         query.producto_codigo,
                         query.fecha_inicio,
                         query.fecha_fin,
+                        snap_path.resolve(),
+                        sig,
                     )
+                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                        logger.warning(
+                            'El HTML contiene tablas y fechas tipo dd/mm/aaaa; si el portal muestra datos, '
+                            'el fallo probable es del parser (detect_primary_table / build_volumen_frame), no del request.'
+                        )
                     register_control_success(
                         control_states,
                         'volumen',
                         'volumen_diario_mercado_lima',
-                        'procedencia',
-                        procedencia['nombre'],
+                        sl,
+                        sv,
                         query,
                         estado='empty',
                     )
                     event_row = build_control_event_row(
                         'volumen',
                         'volumen_diario_mercado_lima',
-                        'procedencia',
-                        procedencia['nombre'],
+                        sl,
+                        sv,
                         query,
                         'empty',
                         'sin_resultados',
@@ -229,15 +237,15 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     output_name='volumen_diario_mercado_lima',
                     expected_columns=EXPECTED_COLUMNS,
                     sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                    scope_label='procedencia',
-                    scope_value=procedencia['nombre'],
+                    scope_label=sl,
+                    scope_value=sv,
                 )
-                register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query)
+                register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
                 event_row = build_control_event_row(
                     'volumen',
                     'volumen_diario_mercado_lima',
-                    'procedencia',
-                    procedencia['nombre'],
+                    sl,
+                    sv,
                     query,
                     'success',
                 )
@@ -245,12 +253,12 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 persist_control_states(control_states)
             except Exception as exc:
                 logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', 'procedencia', procedencia['nombre'], query, str(exc))
+                register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query, str(exc))
                 event_row = build_control_event_row(
                     'volumen',
                     'volumen_diario_mercado_lima',
-                    'procedencia',
-                    procedencia['nombre'],
+                    sl,
+                    sv,
                     query,
                     'error',
                     str(exc),
@@ -271,7 +279,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         shards,
         process_shard,
         max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
-        label=f'volumen/procedencia={procedencia["nombre"]}',
+        label='volumen/volumen_mercado',
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)

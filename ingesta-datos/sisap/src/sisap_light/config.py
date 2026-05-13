@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     sisap_modo_carga: str = 'incremental'
     sisap_incremental_overlap_dias: int = 0
     sisap_use_control_table: bool = True
-    sisap_control_dataset: str = 'ingesta_control'
-    sisap_control_events_dataset: str = 'ingesta_control_eventos'
+    sisap_control_dataset: str = 'control/ingesta_control'
+    sisap_control_events_dataset: str = 'control/ingesta_control_eventos'
     sisap_procedencia_codigo: str | None = None
     sisap_procedencia_nombre: str | None = None
     sisap_mercado_codigo: str | None = None
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     sisap_producto_nombre: str | None = None
     sisap_max_productos: int | None = None
     sisap_max_queries: int | None = None
-    sisap_modulos: str = 'volumen,precios,ciudades-mayoristas,ciudades-minoristas'
+    sisap_modulos: str = 'volumen,precios,regiones'
     sisap_procedencias: str = 'all'
     sisap_regiones: str = 'all'
     sisap_max_scopes: int | None = None

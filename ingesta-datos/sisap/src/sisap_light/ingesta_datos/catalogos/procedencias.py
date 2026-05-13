@@ -25,5 +25,6 @@ PROCEDENCIAS_SISAP = [
     {"codigo": "240000", "nombre": "Tumbes"},
     {"codigo": "250000", "nombre": "Ucayali"},
     {"codigo": "510000", "nombre": "Desconocida"},
+    {"codigo": "000000", "nombre": "Procedencia desconocida"},
 ]
 

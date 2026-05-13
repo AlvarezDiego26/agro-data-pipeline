@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from threading import RLock
@@ -59,7 +59,7 @@ def _change_predicate(dataset_name: str, columns: list[str]) -> str | None:
     return " OR ".join(comparisons)
 
 
-def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[str]) -> str:
+def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[str], overwrite: bool = False) -> str:
     if df.is_empty():
         return ""
 
@@ -75,7 +75,7 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
         merge_predicate = _merge_predicate(dataset_name, source_df.columns)
 
         try:
-            existing_table = DeltaTable(table_uri, storage_options=storage_options)
+            existing_table = DeltaTable(table_uri, storage_options=storage_options) if not overwrite else None
         except Exception:
             existing_table = None
 
