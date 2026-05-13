@@ -35,7 +35,7 @@ def _source_path() -> Path:
 
 def _clean_path() -> str:
     settings = get_settings()
-    return settings.build_delta_uri('exportaciones_filtradas/tablon_exportaciones_agrarias')
+    return settings.build_delta_uri('exportaciones_filtradas/tablon_maestro_agrario')
 
 
 def _get_last_clean_date(uri: str) -> date | None:
@@ -246,14 +246,14 @@ def run_filter_agro() -> dict[str, str | int]:
             pl.lit(fecha_proceso_str).alias('fecha_proceso')
         )
 
-        # Ingestión atómica en el Tablón Maestro Delta (Snapshot Unificado)
-        # Se particiona por fecha_proceso para identificar la versión del tablón
-        # El modo overwrite asegura que el tablón sea la fuente única y limpia
+        # Ingestión atómica incremental en el Tablón Maestro Delta
+        # Se particiona por fecha_particion (la fecha real del archivo SUNAT)
+        # El modo incremental permite ir acumulando historial de diferentes ZIPs
         table_uri = save_delta_table(
             merged_df, 
             'exportaciones_filtradas/tablon_maestro_agrario', 
-            ['fecha_proceso'],
-            overwrite=True
+            ['fecha_particion'],
+            overwrite=False
         )
 
         review_dir = settings.consolidacion_agricola_dir / 'reportes'

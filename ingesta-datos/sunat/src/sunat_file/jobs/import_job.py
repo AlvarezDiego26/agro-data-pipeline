@@ -28,7 +28,7 @@ ZIP_CONSOLIDATED_DATASET = 'base_agro_delta'
 REMOTE_LISTING_DATASET = 'sunat_remote_files'
 SUPPORTED_DIRECT_EXTENSIONS = {'.dbf'}
 SKIPPED_DIRECT_EXTENSIONS = {'.xlsx', '.xlsm', '.xls'}
-REMOTE_NAME_PATTERN = re.compile(r'^(?:x)(\d{2})(\d{2})(\d{2})(\d{2})\.zip$', re.IGNORECASE)
+REMOTE_NAME_PATTERN = re.compile(r'^(?:x|ma|mb|idv|mam)(\d{2})(\d{2})(\d{2})(\d{2})\.zip$', re.IGNORECASE)
 
 
 def _is_target_export_zip(file_name: str) -> bool:
@@ -143,25 +143,27 @@ def _persist_download_source_status(estado: str, mensaje_error: str | None = Non
     _persist_download_event(source_page, estado, mensaje_error)
 
 
-def _extract_remote_period_metadata(source_name: str) -> tuple[int | None, str | None]:
+def _extract_remote_period_metadata(source_name: str) -> tuple[int | None, str | None, str | None]:
     match = REMOTE_NAME_PATTERN.match(source_name)
     if match is None:
-        return None, None
-    _, _, month_raw, year_raw = match.groups()
+        return None, None, None
+    day_start, _, month_raw, year_raw = match.groups()
     year = 2000 + int(year_raw)
     month = f'{int(month_raw):02d}'
-    return year, month
+    day = f'{int(day_start):02d}'
+    return year, month, day
 
 
 def _with_lineage(raw_df: pl.DataFrame, source_file, member_file=None) -> pl.DataFrame:
     member_name = member_file.name if member_file is not None else None
-    archivo_anio_publicacion, archivo_mes_publicacion = _extract_remote_period_metadata(source_file.name)
+    archivo_anio_publicacion, archivo_mes_publicacion, archivo_dia_publicacion = _extract_remote_period_metadata(source_file.name)
     lineage_df = raw_df.with_columns(
         pl.lit(source_file.name).alias('archivo_origen'),
         pl.lit(member_name).alias('archivo_miembro'),
         pl.lit(source_file.suffix.lower()).alias('tipo_archivo_origen'),
         pl.lit(archivo_anio_publicacion).cast(pl.Int32, strict=False).alias('archivo_anio_publicacion'),
         pl.lit(archivo_mes_publicacion).alias('archivo_mes_publicacion'),
+        pl.lit(archivo_dia_publicacion).alias('archivo_dia_publicacion'),
     )
     hash_columns = sorted(lineage_df.columns)
     return lineage_df.with_columns(
@@ -184,7 +186,8 @@ def _persist_base_dataset(df: pl.DataFrame) -> None:
             pl.col('archivo_anio_publicacion').cast(pl.Utf8),
             pl.lit('-'),
             pl.col('archivo_mes_publicacion').str.zfill(2),
-            pl.lit('-01')
+            pl.lit('-'),
+            pl.col('archivo_dia_publicacion').str.zfill(2)
         ]).alias('fecha_particion')
     )
 

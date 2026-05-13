@@ -222,6 +222,7 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
                 "nombre_productor": row.get("dnompro"),
                 "archivo_origen": row.get("archivo_origen"),
                 "archivo_miembro": row.get("archivo_miembro"),
+                "fecha_particion": row.get("fecha_particion"),
                 "registro_hash_fuente": row.get("registro_hash_fuente"),
                 "fuente": FUENTE,
                 "dataset": DATASET,
@@ -251,7 +252,7 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
         "cantidad_fisica", "unidad_fisica", "nombre_exportador", "precio_fob_usd_por_kg", "ubigeo",
         "region_codigo", "region_nombre", "provincia_codigo", "distrito_codigo", "peso_bruto_kg",
         "cantidad_comercial", "unidad_comercial", "nombre_productor", "archivo_origen", "archivo_miembro",
-        "registro_hash_fuente", "fuente", "dataset", "fecha_extraccion", "version",
+        "fecha_particion", "registro_hash_fuente", "fuente", "dataset", "fecha_extraccion", "version",
     ]
     return result.select([c for c in ordered_cols if c in result.columns])
 
