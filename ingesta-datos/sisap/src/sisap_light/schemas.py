@@ -9,8 +9,8 @@ class ModuloSisap(str, Enum):
     MAYORISTA_PRECIOS = "mayorista_precios"
 
     # Ambos módulos de ciudades escriben al mismo tablón Delta consolidado.
-    CIUDADES_PRECIOS_MAYORISTAS = "precio_diario_regiones"
-    CIUDADES_PRECIOS_MINORISTAS = "precio_diario_regiones"
+    CIUDADES_PRECIOS_MAYORISTAS = "ciudades_precios_mayoristas"
+    CIUDADES_PRECIOS_MINORISTAS = "ciudades_precios_minoristas"
 
 
 class ProductoAgricola(BaseModel):

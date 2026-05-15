@@ -87,13 +87,25 @@ def detect_primary_table(html: str) -> list[list[str]]:
 
     # Caso 1: Reporte por Intervalo (Pivoteado: Fecha, Producto1, Producto2...)
     if header and "fecha" in header[0].lower():
-        if len(rows) >= 4:
-             return _extract_mayorista_interval_table_from_rows(rows)
+        second_row = rows[1] if len(rows) > 1 else []
+        third_row = rows[2] if len(rows) > 2 else []
+
+        # Las tablas de precios usan un encabezado de dos niveles:
+        #   [Fecha, Variedad, Variedad...]
+        #   [Fecha, Precio Min/Prom/Max...]
+        # Si las "aplanamos" como volumen, convertimos una fila de datos en encabezado
+        # y el transformer termina devolviendo DataFrame vacio.
+        if any("precio" in cell.lower() for cell in second_row):
+            return rows
+
+        # Volumen mayorista intervalado si trae un tercer nivel real de encabezado.
+        if len(rows) >= 4 and third_row and "fecha" in third_row[0].lower():
+            return _extract_mayorista_interval_table_from_rows(rows)
 
     # Caso 2: Reporte Snapshot (Producto, Variedad, Volumen, Procedencia)
     is_snapshot = any("producto" in h.lower() for h in header) and \
                   any("variedad" in h.lower() for h in header) and \
-                  any("volumen" in h.lower() for h in header)
+                  any(("volumen" in h.lower()) or ("precio" in h.lower()) for h in header)
 
     if is_snapshot:
         titles = extract_report_titles(html)

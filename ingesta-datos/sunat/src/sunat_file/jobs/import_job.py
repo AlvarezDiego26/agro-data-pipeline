@@ -179,8 +179,9 @@ def _persist_base_dataset(df: pl.DataFrame) -> None:
     validate_non_empty(raw_df, ZIP_CONSOLIDATED_DATASET)
     raw_df = normalize_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
     raw_df = deduplicate_dataset(raw_df, ZIP_CONSOLIDATED_DATASET)
-    
-    # Construir fecha_particion basada en el periodo del archivo (primer dia del mes)
+
+    # La base consolidada funciona como capa de trazabilidad por lote publicado SUNAT.
+    # Por eso aqui mantenemos la particion por la fecha del ZIP semanal.
     raw_df = raw_df.with_columns(
         pl.concat_str([
             pl.col('archivo_anio_publicacion').cast(pl.Utf8),
@@ -188,7 +189,8 @@ def _persist_base_dataset(df: pl.DataFrame) -> None:
             pl.col('archivo_mes_publicacion').str.zfill(2),
             pl.lit('-'),
             pl.col('archivo_dia_publicacion').str.zfill(2)
-        ]).alias('fecha_particion')
+        ])
+        .alias('fecha_particion')
     )
 
     # Ingestión unificada usando Delta Lake

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     prefect_enable_sunat: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
+    prefect_worker_process_limit: int = 1
+    prefect_max_parallel_pipelines: int = 1
+    prefect_sisap_deployment_concurrency_limit: int = 1
+    prefect_sunat_deployment_concurrency_limit: int = 1
     prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
     prefect_repo_branch: str = "main"
     prefect_github_access_token: str = ""
@@ -57,12 +61,12 @@ class Settings(BaseSettings):
     sisap_producto_nombre: str = ""
     sisap_use_control_table: bool = True
     sisap_estrategia_instanciacion: str = "por_modulo"
-    sisap_max_instancias_paralelas: int = 8
+    sisap_max_instancias_paralelas: int = 1
     sisap_max_scopes: int | None = None
     sisap_max_productos: int | None = None
     sisap_max_queries: int | None = None
-    sisap_scope_max_workers: int = 2
-    sisap_shard_max_workers: int = 4
+    sisap_scope_max_workers: int = 1
+    sisap_shard_max_workers: int = 1
     sisap_product_batch_size: int = 1
 
     sunat_fecha_corte_inicio: str = "2016-01-01"

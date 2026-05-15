@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from prefect.client.schemas.objects import ConcurrencyLimitConfig, ConcurrencyLimitStrategy
 from prefect.blocks.system import Secret
 from prefect.deployments.runner import deploy as deploy_runner
 from prefect.runner.storage import GitRepository
@@ -34,7 +35,8 @@ from prefect.client.schemas.schedules import IntervalSchedule, CronSchedule
 
 def _schedule_kwargs(enabled: bool, hours: int, is_sunat: bool = False, minute_offset: int = 0) -> dict[str, any]:
     if not enabled:
-        return {}
+        return {"schedule": None}
+    
     if is_sunat:
         # SUNAT corre a las 00:05 y 12:05 para no chocar con el inicio de hora
         return {"schedule": CronSchedule(cron=f"{5 + minute_offset} 0,12 * * *")}
@@ -85,6 +87,13 @@ def _entrypoint(flow_name: str) -> str:
     return f"orquestacion-prefect/src/agro_orquestacion/flows.py:{flow_name}"
 
 
+def _deployment_concurrency(limit: int) -> ConcurrencyLimitConfig:
+    return ConcurrencyLimitConfig(
+        limit=max(limit, 1),
+        collision_strategy=ConcurrencyLimitStrategy.CANCEL_NEW,
+    )
+
+
 def _deploy_managed(settings) -> None:
     source = _build_source(settings)
     sisap_runtime_env = _runtime_env(
@@ -102,7 +111,11 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sisap-precios-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -129,7 +142,12 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sisap-volumen-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=10),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours, 
+            minute_offset=10
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -157,7 +175,12 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sisap-regiones-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=20),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours, 
+            minute_offset=20
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -183,7 +206,12 @@ def _deploy_managed(settings) -> None:
     ).deploy(
         name="sunat-managed",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours, is_sunat=True),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sunat_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sunat, 
+            settings.prefect_sunat_interval_hours, 
+            is_sunat=True
+        ),
         parameters={
             "fecha_corte_inicio": settings.sunat_fecha_corte_inicio,
             "fecha_corte_fin": settings.sunat_fecha_corte_fin or None,
@@ -212,7 +240,11 @@ def _deploy_process(settings) -> None:
     sisap_precios = sisap_precios_flow.to_deployment(
         name="sisap-precios-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -233,7 +265,12 @@ def _deploy_process(settings) -> None:
     sisap_volumen = sisap_volumen_flow.to_deployment(
         name="sisap-volumen-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=10),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours, 
+            minute_offset=10
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -256,7 +293,12 @@ def _deploy_process(settings) -> None:
     sisap_regiones = sisap_regiones_flow.to_deployment(
         name="sisap-regiones-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sisap_master_interval_hours, minute_offset=20),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sisap, 
+            settings.prefect_sisap_master_interval_hours, 
+            minute_offset=20
+        ),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -277,7 +319,12 @@ def _deploy_process(settings) -> None:
     sunat_main = sunat_main_flow.to_deployment(
         name="sunat-local",
         work_pool_name=settings.prefect_target_work_pool_name,
-        **_schedule_kwargs(settings.prefect_enable_schedules, settings.prefect_sunat_interval_hours, is_sunat=True),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sunat_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_sunat, 
+            settings.prefect_sunat_interval_hours, 
+            is_sunat=True
+        ),
         parameters={
             "fecha_corte_inicio": settings.sunat_fecha_corte_inicio,
             "fecha_corte_fin": settings.sunat_fecha_corte_fin or None,

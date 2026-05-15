@@ -287,6 +287,10 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     if errores:
         error_path = output / 'errores.csv'
         pl.DataFrame(errores).write_csv(error_path)
+        raise RuntimeError(
+            'La corrida de volumen finalizo con errores. '
+            f'Revisar {error_path} para el detalle.'
+        )
     return output
 
 

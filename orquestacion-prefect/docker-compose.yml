@@ -80,7 +80,7 @@ services:
       bash -c "
         cd /app/orquestacion-prefect &&
         pip install -e . &&
-        prefect worker start --pool local-pool --type process
+        prefect worker start --pool local-pool --type process --limit $${PREFECT_WORKER_PROCESS_LIMIT:-1}
       "
     restart: unless-stopped
 

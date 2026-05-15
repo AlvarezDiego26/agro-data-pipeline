@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
+from prefect.client.schemas.objects import ConcurrencyLimitConfig, ConcurrencyLimitStrategy
 from prefect.runner import Runner
 
 from agro_orquestacion.config import get_settings
@@ -12,6 +13,13 @@ from agro_orquestacion.flows import (
     sisap_volumen_flow,
     sunat_main_flow,
 )
+
+
+def _deployment_concurrency(limit: int) -> ConcurrencyLimitConfig:
+    return ConcurrencyLimitConfig(
+        limit=max(limit, 1),
+        collision_strategy=ConcurrencyLimitStrategy.CANCEL_NEW,
+    )
 
 
 async def _serve() -> None:
@@ -26,6 +34,7 @@ async def _serve() -> None:
     sisap_precios = sisap_precios_flow.to_deployment(
         name="sisap-precios-cada-4-horas",
         interval=timedelta(hours=settings.prefect_sisap_master_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -43,6 +52,7 @@ async def _serve() -> None:
     sisap_volumen = sisap_volumen_flow.to_deployment(
         name="sisap-volumen-cada-4-horas",
         interval=timedelta(hours=settings.prefect_sisap_master_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -62,6 +72,7 @@ async def _serve() -> None:
     sisap_regiones = sisap_regiones_flow.to_deployment(
         name="sisap-regiones-cada-4-horas",
         interval=timedelta(hours=settings.prefect_sisap_master_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sisap_deployment_concurrency_limit),
         parameters={
             "fecha_inicio": settings.sisap_fecha_inicio,
             "fecha_fin": settings.sisap_fecha_fin or None,
@@ -79,6 +90,7 @@ async def _serve() -> None:
     sunat_deployment = sunat_main_flow.to_deployment(
         name="sunat-cada-6-horas",
         interval=timedelta(hours=settings.prefect_sunat_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_sunat_deployment_concurrency_limit),
         tags=["sunat", "ingesta"],
     )
 

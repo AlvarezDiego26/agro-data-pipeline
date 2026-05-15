@@ -24,6 +24,14 @@ from sisap_light.schemas import ModuloSisap
 app = typer.Typer(help='CLI del proyecto SISAP liviano.')
 
 
+def _run_and_report(runner):
+    try:
+        return runner()
+    except Exception as exc:
+        typer.echo(f'ERROR: {exc}')
+        raise typer.Exit(code=1)
+
+
 def _apply_runtime_overrides(
     fecha_inicio: str | None,
     fecha_fin: str | None,
@@ -175,7 +183,7 @@ def run_main_command(
         shard_workers,
         product_batch_size,
     )
-    result = run_pipeline_main()
+    result = _run_and_report(run_pipeline_main)
     _echo_pipeline_summary(result)
 
 
@@ -232,15 +240,17 @@ def run_volumen(
     shard_workers: int | None = typer.Option(None, '--shard-workers'),
     product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
 ) -> None:
-    output = _run_command_with_overrides(
-        run_volumen_full,
-        fecha_inicio,
-        fecha_fin,
-        modo_carga,
-        max_queries,
-        scope_workers,
-        shard_workers,
-        product_batch_size,
+    output = _run_and_report(
+        lambda: _run_command_with_overrides(
+            run_volumen_full,
+            fecha_inicio,
+            fecha_fin,
+            modo_carga,
+            max_queries,
+            scope_workers,
+            shard_workers,
+            product_batch_size,
+        )
     )
     typer.echo(f'Volumen consolidado guardado en: {output}')
 
@@ -263,15 +273,17 @@ def run_precios(
     shard_workers: int | None = typer.Option(None, '--shard-workers'),
     product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
 ) -> None:
-    output = _run_command_with_overrides(
-        run_precios_full,
-        fecha_inicio,
-        fecha_fin,
-        modo_carga,
-        max_queries,
-        scope_workers,
-        shard_workers,
-        product_batch_size,
+    output = _run_and_report(
+        lambda: _run_command_with_overrides(
+            run_precios_full,
+            fecha_inicio,
+            fecha_fin,
+            modo_carga,
+            max_queries,
+            scope_workers,
+            shard_workers,
+            product_batch_size,
+        )
     )
     typer.echo(f'Precios consolidados guardados en: {output}')
 
@@ -302,15 +314,17 @@ def run_ciudades_mayoristas(
     shard_workers: int | None = typer.Option(None, '--shard-workers'),
     product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
 ) -> None:
-    output = _run_command_with_overrides(
-        lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS),
-        fecha_inicio,
-        fecha_fin,
-        modo_carga,
-        max_queries,
-        scope_workers,
-        shard_workers,
-        product_batch_size,
+    output = _run_and_report(
+        lambda: _run_command_with_overrides(
+            lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS),
+            fecha_inicio,
+            fecha_fin,
+            modo_carga,
+            max_queries,
+            scope_workers,
+            shard_workers,
+            product_batch_size,
+        )
     )
     typer.echo(f'Ciudades mayoristas consolidadas guardadas en: {output}')
 
@@ -325,15 +339,17 @@ def run_ciudades_minoristas(
     shard_workers: int | None = typer.Option(None, '--shard-workers'),
     product_batch_size: int | None = typer.Option(None, '--product-batch-size'),
 ) -> None:
-    output = _run_command_with_overrides(
-        lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS),
-        fecha_inicio,
-        fecha_fin,
-        modo_carga,
-        max_queries,
-        scope_workers,
-        shard_workers,
-        product_batch_size,
+    output = _run_and_report(
+        lambda: _run_command_with_overrides(
+            lambda: run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS),
+            fecha_inicio,
+            fecha_fin,
+            modo_carga,
+            max_queries,
+            scope_workers,
+            shard_workers,
+            product_batch_size,
+        )
     )
     typer.echo(f'Ciudades minoristas consolidadas guardadas en: {output}')
 

@@ -448,20 +448,34 @@ def sisap_master_flow(
     resultados: list[dict[str, object]] = []
     errores: list[str] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(requested_modules) or 1) as executor:
-        futures = {
-            executor.submit(flow_map[modulo]): modulo
-            for modulo in requested_modules
-            if modulo in flow_map
-        }
-        for future in concurrent.futures.as_completed(futures):
-            modulo = futures[future]
+    valid_modules = [modulo for modulo in requested_modules if modulo in flow_map]
+    max_parallel_modules = max(
+        min(settings.sisap_max_instancias_paralelas, len(valid_modules) or 1),
+        1,
+    )
+
+    if max_parallel_modules == 1:
+        for modulo in valid_modules:
             try:
-                future.result()
+                flow_map[modulo]()
                 resultados.append({"instancia": modulo, "estado": "success"})
             except Exception as exc:
                 resultados.append({"instancia": modulo, "estado": "error", "error": str(exc)})
                 errores.append(f"{modulo}: {exc}")
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_modules) as executor:
+            futures = {
+                executor.submit(flow_map[modulo]): modulo
+                for modulo in valid_modules
+            }
+            for future in concurrent.futures.as_completed(futures):
+                modulo = futures[future]
+                try:
+                    future.result()
+                    resultados.append({"instancia": modulo, "estado": "success"})
+                except Exception as exc:
+                    resultados.append({"instancia": modulo, "estado": "error", "error": str(exc)})
+                    errores.append(f"{modulo}: {exc}")
 
     summary = {
         "estrategia_instanciacion": "flows_independientes",
@@ -512,15 +526,25 @@ def agro_ingesta_flow(
                 fecha_corte_fin=sunat_fecha_corte_fin,
             )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = []
-        if run_sisap and settings.prefect_enable_sisap:
-            futures.append(executor.submit(_run_sisap))
-        if run_sunat and settings.prefect_enable_sunat:
-            futures.append(executor.submit(_run_sunat))
+    requested_pipelines = []
+    if run_sisap and settings.prefect_enable_sisap:
+        requested_pipelines.append(_run_sisap)
+    if run_sunat and settings.prefect_enable_sunat:
+        requested_pipelines.append(_run_sunat)
 
-        for future in concurrent.futures.as_completed(futures):
-            future.result()
+    max_parallel_pipelines = max(
+        min(settings.prefect_max_parallel_pipelines, len(requested_pipelines) or 1),
+        1,
+    )
+
+    if max_parallel_pipelines == 1:
+        for pipeline_runner in requested_pipelines:
+            pipeline_runner()
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_pipelines) as executor:
+            futures = [executor.submit(pipeline_runner) for pipeline_runner in requested_pipelines]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
 
 def _main() -> None:

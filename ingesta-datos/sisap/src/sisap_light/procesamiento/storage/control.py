@@ -539,7 +539,6 @@ def append_control_events(events_df: pl.DataFrame) -> str:
         total_time = time.monotonic() - lock_start
         if total_time > 5.0:  # Log if entire operation took >5 seconds
             logger.debug(f'Control events write operation took {total_time:.2f}s total')
-            return str(_pending_control_events_path())
 
 
 def sync_pending_control_events() -> dict[str, object]:

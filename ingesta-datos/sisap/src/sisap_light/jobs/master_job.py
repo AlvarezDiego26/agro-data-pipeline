@@ -116,11 +116,11 @@ def _sync_control_queues() -> tuple[dict[str, object], dict[str, object]]:
     return control_sync, events_sync
 
 
-def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> list[str]:
+def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> tuple[list[str], list[str]]:
     settings = get_settings()
     scope_values = spec.iter_values_getter()
     if not scope_values:
-        return []
+        return [], []
 
     def run_scope(scope_value: str) -> str:
         logger.info('Ejecutando {} para {}={}', modulo, spec.scope_name, scope_value)
@@ -130,9 +130,25 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> l
         return f'{modulo} [{spec.scope_name}={scope_value}] -> {output}'
 
     if not settings.parallel_enabled or settings.scope_max_workers == 1 or len(scope_values) == 1:
-        return [run_scope(scope_value) for scope_value in scope_values]
+        resultados: list[str] = []
+        errores: list[str] = []
+        for scope_value in scope_values:
+            try:
+                resultados.append(run_scope(scope_value))
+            except Exception as exc:
+                logger.exception(
+                    'Fallo el bloque {} para {}={}',
+                    modulo,
+                    spec.scope_name,
+                    scope_value,
+                )
+                error_message = f'{modulo} [{spec.scope_name}={scope_value}] -> ERROR: {exc}'
+                resultados.append(error_message)
+                errores.append(error_message)
+        return resultados, errores
 
     resultados: list[str] = []
+    errores: list[str] = []
     workers = min(settings.scope_max_workers, len(scope_values))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='sisap-scope') as executor:
         future_map = {
@@ -150,15 +166,16 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> l
                     spec.scope_name,
                     scope_value,
                 )
-                resultados.append(
-                    f'{modulo} [{spec.scope_name}={scope_value}] -> ERROR: {exc}'
-                )
-    return resultados
+                error_message = f'{modulo} [{spec.scope_name}={scope_value}] -> ERROR: {exc}'
+                resultados.append(error_message)
+                errores.append(error_message)
+    return resultados, errores
 
 
 def run_pipeline_main() -> dict[str, object]:
     settings = get_settings()
     resultados: list[str] = []
+    errores: list[str] = []
     pause_seconds = max(settings.sisap_pause_seconds, 0)
     module_specs = _module_specs()
 
@@ -172,7 +189,9 @@ def run_pipeline_main() -> dict[str, object]:
         spec = module_specs.get(modulo)
         if spec is None:
             raise ValueError(f'Modulo no soportado: {modulo}')
-        resultados.extend(_run_module_scope(modulo, spec, pause_seconds))
+        module_results, module_errors = _run_module_scope(modulo, spec, pause_seconds)
+        resultados.extend(module_results)
+        errores.extend(module_errors)
 
     if settings.sisap_use_control_table:
         final_control_sync, final_events_sync = _sync_control_queues()
@@ -190,12 +209,13 @@ def run_pipeline_main() -> dict[str, object]:
             'pending_events_path': 'control-disabled',
             'local_events_path': 'control-disabled',
         }
-    return {
+    result = {
         'modulos': settings.modulos_resueltos,
         'procedencias': settings.procedencias_resueltas,
         'mercados': settings.mercados_resueltos,
         'regiones': settings.regiones_resueltas,
         'resultados': resultados,
+        'errores': errores,
         'scope_workers': settings.scope_max_workers,
         'shard_workers': settings.shard_max_workers,
         'product_batch_size': settings.product_batch_size,
@@ -203,3 +223,9 @@ def run_pipeline_main() -> dict[str, object]:
         'control_events_sync': final_events_sync,
         'control_status': control_status,
     }
+    if errores:
+        raise RuntimeError(
+            'La corrida SISAP finalizo con errores en uno o mas bloques: '
+            + ' | '.join(errores)
+        )
+    return result

@@ -356,4 +356,8 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     if errores:
         error_path = output / 'errores.csv'
         pl.DataFrame(errores).write_csv(error_path)
+        raise RuntimeError(
+            f'La corrida de {_output_name(modulo)} finalizo con errores. '
+            f'Revisar {error_path} para el detalle.'
+        )
     return output

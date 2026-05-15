@@ -222,7 +222,9 @@ def build_sunat_exportaciones_frescas(df: pl.DataFrame) -> pl.DataFrame:
                 "nombre_productor": row.get("dnompro"),
                 "archivo_origen": row.get("archivo_origen"),
                 "archivo_miembro": row.get("archivo_miembro"),
-                "fecha_particion": row.get("fecha_particion"),
+                # El tablon filtrado debe seguir la fecha real del registro SUNAT,
+                # no la semana de publicacion del ZIP.
+                "fecha_particion": fecha,
                 "registro_hash_fuente": row.get("registro_hash_fuente"),
                 "fuente": FUENTE,
                 "dataset": DATASET,
