@@ -1,4 +1,4 @@
-polars==1.30.0
+polars-lts-cpu==1.30.0
 pyarrow==20.0.0
 deltalake==0.18.2
 dbfread==2.0.7
