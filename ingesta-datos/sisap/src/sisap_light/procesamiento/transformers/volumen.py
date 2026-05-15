@@ -43,14 +43,17 @@ def build_volumen_frame(rows: list[list[str]], query: SisapQuery | None = None) 
             value_name="volumen_ton",
         )
 
+        # `split_exact` evita errores de indice cuando la columna viene solo como
+        # variedad (ej. "Alcachofa") y no como "Variedad__Procedencia".
+        parts = pl.col("producto_procedencia").str.split_exact("__", 1)
         melted = melted.with_columns(
-            pl.when(pl.col('producto_procedencia').str.contains('__'))
-            .then(pl.col('producto_procedencia').str.split('__').list.get(0))
-            .otherwise(pl.col('producto_procedencia'))
+            pl.when(pl.col("producto_procedencia").str.contains("__"))
+            .then(parts.struct.field("field_0"))
+            .otherwise(pl.col("producto_procedencia"))
             .alias('variedad'),
-            pl.when(pl.col('producto_procedencia').str.contains('__'))
-            .then(pl.col('producto_procedencia').str.split('__').list.get(1).fill_null('Total'))
-            .otherwise(pl.lit('Consolidado'))
+            pl.when(pl.col("producto_procedencia").str.contains("__"))
+            .then(parts.struct.field("field_1").fill_null("Total"))
+            .otherwise(pl.lit("Consolidado"))
             .alias('procedencia'),
         ).drop("producto_procedencia")
 
