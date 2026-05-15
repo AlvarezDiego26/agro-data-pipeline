@@ -98,8 +98,20 @@ def detect_primary_table(html: str) -> list[list[str]]:
         if any("precio" in cell.lower() for cell in second_row):
             return rows
 
-        # Volumen mayorista intervalado si trae un tercer nivel real de encabezado.
-        if len(rows) >= 4 and third_row and "fecha" in third_row[0].lower():
+        # Volumen mayorista intervalado puede venir al menos en dos variantes:
+        # 1) tercera fila repite "Fecha" y luego las procedencias por columna
+        # 2) tercera fila muestra "Total" por columna cuando ya se filtro una procedencia
+        #    especifica y cada columna representa una variedad
+        if (
+            len(rows) >= 4
+            and second_row
+            and any("volumen" in cell.lower() for cell in second_row)
+            and third_row
+            and (
+                "fecha" in third_row[0].lower()
+                or any("total" in cell.lower() for cell in third_row[1:])
+            )
+        ):
             return _extract_mayorista_interval_table_from_rows(rows)
 
     # Caso 2: Reporte Snapshot (Producto, Variedad, Volumen, Procedencia)
@@ -132,7 +144,8 @@ def _extract_mayorista_interval_table_from_rows(rows: list[list[str]]) -> list[l
 
     columns = ["Fecha"]
     productos = header_level_1[1:]
-    procedencias = header_level_3[1:] if header_level_3[0].lower() == "fecha" else header_level_3
+    first_cell = header_level_3[0].strip().lower() if header_level_3 and header_level_3[0] else ""
+    procedencias = header_level_3[1:] if first_cell in {"fecha", "total"} else header_level_3
 
     for idx, producto in enumerate(productos):
         procedencia = procedencias[idx].strip() if idx < len(procedencias) else "Total"
