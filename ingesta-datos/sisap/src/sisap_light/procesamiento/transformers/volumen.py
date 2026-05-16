@@ -83,6 +83,12 @@ def build_volumen_frame(rows: list[list[str]], query: SisapQuery | None = None) 
             pl.lit(query.fecha_inicio).alias("fecha_inicio_consulta"),
             pl.lit(query.fecha_fin).alias("fecha_fin_consulta"),
         )
+        if query.procedencia_nombre:
+            # Cuando la consulta ya va filtrada por una procedencia concreta,
+            # esa es la fuente de verdad y evita arrastrar basura del encabezado.
+            melted = melted.with_columns(
+                pl.lit(query.procedencia_nombre).alias("procedencia")
+            )
 
     ordered = [
         col

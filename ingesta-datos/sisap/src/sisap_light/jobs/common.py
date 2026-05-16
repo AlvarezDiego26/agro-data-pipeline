@@ -435,17 +435,30 @@ def resolve_query_dates(
         return fecha_inicio, fecha_fin
 
     if min_loaded is not None and min_loaded > fecha_inicio:
-        logger.warning(
-            'Se detecto historial parcial en {} {} producto={}: '
-            'la data escrita inicia en {} y la configuracion pide {}. '
-            'Se relanzara backfill historico desde la fecha configurada.',
-            output_name,
-            scope_value,
-            producto_codigo,
-            min_loaded,
-            fecha_inicio,
-        )
-        return fecha_inicio, fecha_fin
+        if history_complete:
+            logger.info(
+                'La tabla de control ya marco historico completo para {} {} producto={}. '
+                'El primer dato materializado inicia en {}, mayor que {}, '
+                'probablemente porque no hubo observaciones ese dia. '
+                'Se continuara en modo incremental sin relanzar backfill completo.',
+                output_name,
+                scope_value,
+                producto_codigo,
+                min_loaded,
+                fecha_inicio,
+            )
+        else:
+            logger.warning(
+                'Se detecto historial parcial en {} {} producto={}: '
+                'la data escrita inicia en {} y la configuracion pide {}. '
+                'Se relanzara backfill historico desde la fecha configurada.',
+                output_name,
+                scope_value,
+                producto_codigo,
+                min_loaded,
+                fecha_inicio,
+            )
+            return fecha_inicio, fecha_fin
 
     if min_loaded is not None and min_loaded <= fecha_inicio and not history_complete:
         logger.info(

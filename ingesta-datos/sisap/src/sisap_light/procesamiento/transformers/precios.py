@@ -26,6 +26,26 @@ METRIC_LABELS = {
 }
 
 
+def _clean_variedad_expr(column_name: str = "variedad") -> pl.Expr:
+    raw = pl.col(column_name).cast(pl.Utf8, strict=False).str.strip_chars()
+    parts = raw.str.split_exact("__", 1)
+    suffix = parts.struct.field("field_1").fill_null("")
+
+    suffix_is_noise = (
+        suffix.str.contains(r"^\d{1,2}/\d{1,2}/\d{4}$")
+        | suffix.str.contains(r"^\d+(?:[.,]\d+)?$")
+        | suffix.is_in(["", "...", "....", "-", "Precio Mínimo", "Precio Maximo", "Precio Máximo", "Precio Promedio"])
+    )
+
+    return (
+        pl.when(raw.str.contains("__") & suffix_is_noise)
+        .then(parts.struct.field("field_0"))
+        .otherwise(raw)
+        .str.strip_chars()
+        .alias("variedad")
+    )
+
+
 def _parse_metric_rows(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
     if len(rows) < 3:
         return [], []
@@ -79,7 +99,7 @@ def build_precio_metric_frame(rows: list[list[str]], query: SisapQuery, metric_n
         .rename({"Fecha": "fecha"})
         .with_columns(
             pl.col("fecha").str.strptime(pl.Date, "%d/%m/%Y", strict=False),
-            pl.col("variedad").str.strip_chars().alias("variedad"),
+            _clean_variedad_expr("variedad"),
             pl.when(pl.col(METRIC_LABELS[metric_name]).str.strip_chars().is_in(["...", ""]))
             .then(None)
             .otherwise(pl.col(METRIC_LABELS[metric_name]).str.replace(",", ".", literal=True))
@@ -139,7 +159,7 @@ def _build_multilevel_precio_frame(rows: list[list[str]], query: SisapQuery, met
     return (
         df.with_columns(
             pl.col("fecha").str.strptime(pl.Date, "%d/%m/%Y", strict=False),
-            pl.col("variedad").str.strip_chars().alias("variedad"),
+            _clean_variedad_expr("variedad"),
             pl.when(pl.col(METRIC_LABELS[metric_name]).str.strip_chars().is_in(["...", ""]))
             .then(None)
             .otherwise(pl.col(METRIC_LABELS[metric_name]).str.replace(",", ".", literal=True))
@@ -191,7 +211,7 @@ def _build_snapshot_precio_frame(header: list[str], data: list[list[str]], query
         })
         .with_columns(
             pl.col("fecha").str.strptime(pl.Date, "%d/%m/%Y", strict=False),
-            pl.col("variedad").str.strip_chars().alias("variedad"),
+            _clean_variedad_expr("variedad"),
             pl.when(pl.col(METRIC_LABELS[metric_name]).str.strip_chars().is_in(["...", ""]))
             .then(None)
             .otherwise(pl.col(METRIC_LABELS[metric_name]).str.replace(",", ".", literal=True))

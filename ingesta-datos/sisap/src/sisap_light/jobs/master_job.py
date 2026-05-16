@@ -29,7 +29,7 @@ class ModuleRunSpec:
 
 
 def _run_volumen(_: str) -> str:
-    return str(run_volumen_full())
+    return str(run_volumen_full(procedencia_nombre=_))
 
 
 def _run_precios(_: str) -> str:
@@ -58,8 +58,11 @@ def _module_specs() -> dict[str, ModuleRunSpec]:
     settings = get_settings()
     return {
         'volumen': ModuleRunSpec(
-            scope_name='carga',
-            iter_values_getter=lambda: ['consolidado_por_mercado'],
+            scope_name='procedencia',
+            iter_values_getter=lambda: (
+                ['consolidado'] if settings.sisap_mercado_codigo == '*'
+                else settings.procedencias_resueltas
+            ),
             scope_attr='sisap_procedencia_nombre',
             runner=_run_volumen,
         ),

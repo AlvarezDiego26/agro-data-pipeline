@@ -4,6 +4,7 @@ import polars as pl
 from loguru import logger
 
 from sisap_light.config import get_settings
+from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
@@ -18,6 +19,7 @@ from sisap_light.jobs.common import (
     register_control_failure,
     register_control_query,
     register_control_success,
+    resolve_item,
 )
 from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_forms import (
@@ -56,7 +58,18 @@ def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
     mercado = str(query.mercado_codigo or '')
     if mercado == '*':
         mercado = 'consolidado'
-    return 'volumen_mercado', mercado
+        return 'volumen_mercado', mercado
+    return 'procedencia', query.procedencia_nombre or 'desconocida'
+
+
+def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
+    settings = get_settings()
+    return resolve_item(
+        PROCEDENCIAS_SISAP,
+        settings.sisap_procedencia_codigo,
+        procedencia_nombre or settings.sisap_procedencia_nombre,
+        'la procedencia',
+    )
 
 
 def inspect_home() -> dict:
@@ -86,8 +99,10 @@ def inspect_home_mercado(mercado_codigo: str) -> dict:
 
 def _build_raw_plan(
     mercado_nombre: str | None = None,
+    procedencia_nombre: str | None = None,
     productos_override: list[dict] | None = None,
 ) -> list[SisapQuery]:
+    procedencia = _resolve_procedencia(procedencia_nombre) if (procedencia_nombre and procedencia_nombre != 'consolidado') else None
     mercados = iter_mercados_ejecucion(mercado_nombre)
     plan: list[SisapQuery] = []
     for mercado in mercados:
@@ -97,16 +112,16 @@ def _build_raw_plan(
                 output_name='volumen_diario_mercado_lima',
                 modulo=ModuloSisap.MAYORISTA_VOLUMEN,
                 mercado=mercado,
-                procedencia=None,
+                procedencia=procedencia,
                 productos_override=productos_override,
             )
         )
     return plan
 
 
-def build_plan() -> list[SisapQuery]:
+def build_plan(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> list[SisapQuery]:
     settings = get_settings()
-    return filter_plan(_build_raw_plan(), settings.sisap_max_queries)
+    return filter_plan(_build_raw_plan(mercado_nombre, procedencia_nombre), settings.sisap_max_queries)
 
 
 def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[SisapQuery]) -> tuple[SisapQuery, str, list[list[str]]]:
@@ -143,14 +158,18 @@ def run_sample() -> Path:
 
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
-    _ = procedencia_nombre
-    plan = filter_plan(_build_raw_plan(mercado_nombre), settings.sisap_max_queries)
+    if settings.sisap_mercado_codigo == '*':
+        procedencia_nombre = None
+
+    plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia_nombre), settings.sisap_max_queries)
+    scope_value = procedencia_nombre or 'consolidado'
+    scope_label = 'procedencia' if procedencia_nombre else 'volumen_mercado'
     if not plan:
         logger.info('No hay queries pendientes para volumen.')
-        return build_scope_output_dir('volumen_diario_mercado_lima', 'volumen_mercado', 'consolidado')
+        return build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
 
     errores: list[dict[str, str]] = []
-    output = build_scope_output_dir('volumen_diario_mercado_lima', 'volumen_mercado', 'consolidado')
+    output = build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
 
     shards = build_grouped_shards(
@@ -279,7 +298,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         shards,
         process_shard,
         max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
-        label='volumen/volumen_mercado',
+        label=f'volumen/{scope_label}={scope_value}',
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
