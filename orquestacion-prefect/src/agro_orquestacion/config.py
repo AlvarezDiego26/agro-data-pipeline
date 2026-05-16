@@ -22,12 +22,16 @@ class Settings(BaseSettings):
     prefect_enable_schedules: bool = True
     prefect_enable_sisap: bool = True
     prefect_enable_sunat: bool = True
+    prefect_enable_midagri_ce: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
+    prefect_midagri_ce_interval_hours: int = 24
+    prefect_midagri_ce_timeout_minutes: int = 120
     prefect_worker_process_limit: int = 1
     prefect_max_parallel_pipelines: int = 1
     prefect_sisap_deployment_concurrency_limit: int = 1
     prefect_sunat_deployment_concurrency_limit: int = 1
+    prefect_midagri_ce_deployment_concurrency_limit: int = 1
     prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
     prefect_repo_branch: str = "main"
     prefect_github_access_token: str = ""
@@ -46,6 +50,7 @@ class Settings(BaseSettings):
     sisap_control_dataset: str = "control/ingesta_control"
     sisap_control_events_dataset: str = "control/ingesta_control_eventos"
     sunat_minio_prefix: str = "Landing/sunat"
+    midagri_ce_minio_prefix: str = "Landing/midagri_comercio_exterior"
 
     sisap_fecha_inicio: str = "2016-01-01"
     sisap_fecha_fin: str = ""
@@ -72,6 +77,13 @@ class Settings(BaseSettings):
     sunat_fecha_corte_inicio: str = "2016-01-01"
     sunat_fecha_corte_fin: str = ""
     sunat_modo_carga: str = "incremental"
+    midagri_ce_source_url: str = (
+        "https://www.gob.pe/institucion/midagri/informes-publicaciones/"
+        "2730438-compendio-anual-de-comercio-exterior-agrario"
+    )
+    midagri_ce_fecha_corte_inicio: str = "2016-01-01"
+    midagri_ce_fecha_corte_fin: str = ""
+    midagri_ce_modo_carga: str = "incremental"
 
     @property
     def repo_root(self) -> Path:
@@ -90,6 +102,10 @@ class Settings(BaseSettings):
         return self.repo_root / "ingesta-datos" / "sunat"
 
     @property
+    def midagri_ce_root(self) -> Path:
+        return self.repo_root / "ingesta-datos" / "midagri-comercio-exterior"
+
+    @property
     def runtime_venvs_root(self) -> Path:
         return self.repo_root / ".runtime-venvs"
 
@@ -100,6 +116,10 @@ class Settings(BaseSettings):
     @property
     def sunat_requirements_path(self) -> Path:
         return self.sunat_root / "requirements.txt"
+
+    @property
+    def midagri_ce_requirements_path(self) -> Path:
+        return self.midagri_ce_root / "requirements.txt"
 
     @property
     def prefect_requirements(self) -> list[str]:
@@ -168,6 +188,23 @@ class Settings(BaseSettings):
             "SUNAT_FECHA_CORTE_INICIO": self.sunat_fecha_corte_inicio,
             "SUNAT_FECHA_CORTE_FIN": self.sunat_fecha_corte_fin,
             "SUNAT_MODO_CARGA": self.sunat_modo_carga,
+        }
+
+    def midagri_ce_env(self) -> dict[str, str]:
+        return {
+            "PYTHONPATH": "src",
+            "MIDAGRI_CE_STORAGE_BACKEND": self.storage_backend,
+            "MIDAGRI_CE_DELTA_ENABLED": str(self.delta_enabled).lower(),
+            "MINIO_ENDPOINT": self.minio_endpoint,
+            "MINIO_ACCESS_KEY": self.minio_access_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
+            "MINIO_BUCKET": self.minio_bucket,
+            "MINIO_REGION": self.minio_region,
+            "MIDAGRI_CE_MINIO_PREFIX": self.midagri_ce_minio_prefix,
+            "MIDAGRI_CE_SOURCE_PAGE_URL": self.midagri_ce_source_url,
+            "MIDAGRI_CE_FECHA_CORTE_INICIO": self.midagri_ce_fecha_corte_inicio,
+            "MIDAGRI_CE_FECHA_CORTE_FIN": self.midagri_ce_fecha_corte_fin,
+            "MIDAGRI_CE_MODO_CARGA": self.midagri_ce_modo_carga,
         }
 
 

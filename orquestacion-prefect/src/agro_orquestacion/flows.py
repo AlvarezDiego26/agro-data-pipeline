@@ -113,6 +113,40 @@ def run_sunat_task(
     )
 
 
+@task(
+    retries=3,
+    retry_delay_seconds=[60, 300, 900],
+    tags=["midagri-ce-concurrency"]
+)
+def run_midagri_ce_task(
+    fecha_corte_inicio: str | None = None,
+    fecha_corte_fin: str | None = None,
+    modo_carga: str | None = None,
+) -> None:
+    settings = get_settings()
+    python_executable = ensure_runtime_python(
+        "midagri-comercio-exterior",
+        settings.midagri_ce_requirements_path,
+        settings.midagri_ce_root,
+        settings.runtime_venvs_root,
+    )
+    environment = _merge_env(
+        settings.midagri_ce_env(),
+        {
+            "MIDAGRI_CE_FECHA_CORTE_INICIO": fecha_corte_inicio,
+            "MIDAGRI_CE_FECHA_CORTE_FIN": fecha_corte_fin,
+            "MIDAGRI_CE_MODO_CARGA": modo_carga,
+        },
+    )
+    run_python_module(
+        "midagri_comercio_exterior.cli",
+        arguments=["run-main"],
+        working_dir=settings.midagri_ce_root,
+        environment=environment,
+        python_executable=python_executable,
+    )
+
+
 def _run_sisap_module_task(
     *,
     modulo: str,
@@ -501,6 +535,19 @@ def sunat_main_flow(
     )
 
 
+@flow(name="midagri-ce-main-flow", log_prints=True)
+def midagri_ce_main_flow(
+    fecha_corte_inicio: str | None = None,
+    fecha_corte_fin: str | None = None,
+    modo_carga: str | None = None,
+) -> None:
+    run_midagri_ce_task(
+        fecha_corte_inicio=fecha_corte_inicio,
+        fecha_corte_fin=fecha_corte_fin,
+        modo_carga=modo_carga,
+    )
+
+
 @flow(name="agro-ingesta-flow", log_prints=True)
 def agro_ingesta_flow(
     run_sisap: bool = True,
@@ -564,6 +611,8 @@ def _main() -> None:
         sisap_regiones_flow.with_options(timeout_seconds=60 * settings.prefect_sisap_timeout_minutes)()
     elif mode == "sunat":
         sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)()
+    elif mode == "midagri-ce":
+        midagri_ce_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_ce_timeout_minutes)()
     else:
         agro_ingesta_flow()
 

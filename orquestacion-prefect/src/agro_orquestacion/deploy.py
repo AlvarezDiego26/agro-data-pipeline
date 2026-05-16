@@ -10,6 +10,7 @@ from prefect.types.entrypoint import EntrypointType
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
+    midagri_ce_main_flow,
     sisap_precios_flow,
     sisap_regiones_flow,
     sisap_volumen_flow,
@@ -29,6 +30,7 @@ def _managed_pythonpath() -> str:
             "orquestacion-prefect/src",
             "ingesta-datos/sisap/src",
             "ingesta-datos/sunat/src",
+            "ingesta-datos/midagri-comercio-exterior/src",
         ]
     )
 from prefect.client.schemas.schedules import IntervalSchedule, CronSchedule
@@ -102,6 +104,10 @@ def _deploy_managed(settings) -> None:
     )
     sunat_runtime_env = _runtime_env(
         settings.sunat_env(),
+        pythonpath=_managed_pythonpath(),
+    )
+    midagri_runtime_env = _runtime_env(
+        settings.midagri_ce_env(),
         pythonpath=_managed_pythonpath(),
     )
 
@@ -225,6 +231,31 @@ def _deploy_managed(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    midagri_ce_main_flow.from_source(
+        source=source,
+        entrypoint=_entrypoint("midagri_ce_main_flow"),
+    ).deploy(
+        name="midagri-ce-managed",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_midagri_ce_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_midagri_ce,
+            settings.prefect_midagri_ce_interval_hours,
+            minute_offset=30,
+        ),
+        parameters={
+            "fecha_corte_inicio": settings.midagri_ce_fecha_corte_inicio,
+            "fecha_corte_fin": settings.midagri_ce_fecha_corte_fin or None,
+            "modo_carga": settings.midagri_ce_modo_carga,
+        },
+        job_variables={
+            "pip_packages": settings.prefect_requirements,
+            "env": midagri_runtime_env,
+        },
+        tags=["midagri-ce", "managed", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
 def _deploy_process(settings) -> None:
     runtime_pythonpath = str(settings.orquestacion_root / "src")
     working_dir = str(settings.repo_root)
@@ -234,6 +265,10 @@ def _deploy_process(settings) -> None:
     }
     sunat_job_variables = {
         "env": _runtime_env(settings.sunat_env(), pythonpath=runtime_pythonpath),
+        "working_dir": working_dir,
+    }
+    midagri_job_variables = {
+        "env": _runtime_env(settings.midagri_ce_env(), pythonpath=runtime_pythonpath),
         "working_dir": working_dir,
     }
 
@@ -335,11 +370,31 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    midagri_ce_main = midagri_ce_main_flow.to_deployment(
+        name="midagri-ce-local",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_midagri_ce_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_midagri_ce,
+            settings.prefect_midagri_ce_interval_hours,
+            minute_offset=30,
+        ),
+        parameters={
+            "fecha_corte_inicio": settings.midagri_ce_fecha_corte_inicio,
+            "fecha_corte_fin": settings.midagri_ce_fecha_corte_fin or None,
+            "modo_carga": settings.midagri_ce_modo_carga,
+        },
+        job_variables=midagri_job_variables,
+        tags=["midagri-ce", "local", "process", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     deploy_runner(
         sisap_precios,
         sisap_volumen,
         sisap_regiones,
         sunat_main,
+        midagri_ce_main,
         work_pool_name=settings.prefect_target_work_pool_name,
         build=False,
         push=False,

@@ -8,6 +8,7 @@ from prefect.runner import Runner
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
+    midagri_ce_main_flow,
     sisap_precios_flow,
     sisap_regiones_flow,
     sisap_volumen_flow,
@@ -93,11 +94,23 @@ async def _serve() -> None:
         concurrency_limit=_deployment_concurrency(settings.prefect_sunat_deployment_concurrency_limit),
         tags=["sunat", "ingesta"],
     )
+    midagri_ce_deployment = midagri_ce_main_flow.to_deployment(
+        name="midagri-ce-cada-24-horas",
+        interval=timedelta(hours=settings.prefect_midagri_ce_interval_hours),
+        concurrency_limit=_deployment_concurrency(settings.prefect_midagri_ce_deployment_concurrency_limit),
+        parameters={
+            "fecha_corte_inicio": settings.midagri_ce_fecha_corte_inicio,
+            "fecha_corte_fin": settings.midagri_ce_fecha_corte_fin or None,
+            "modo_carga": settings.midagri_ce_modo_carga,
+        },
+        tags=["midagri-ce", "ingesta"],
+    )
 
     await runner.add_deployment(sisap_precios)
     await runner.add_deployment(sisap_volumen)
     await runner.add_deployment(sisap_regiones)
     await runner.add_deployment(sunat_deployment)
+    await runner.add_deployment(midagri_ce_deployment)
     await runner.start()
 
 
