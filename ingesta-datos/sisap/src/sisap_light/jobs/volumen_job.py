@@ -54,6 +54,7 @@ EXPECTED_COLUMNS = [
 ]
 
 MAX_SAMPLE_QUERIES = 12
+CONTROL_FLUSH_EVERY = 20
 _NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
 _DATE_VALUE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
@@ -70,6 +71,13 @@ def _table_has_materialized_values(rows: list[list[str]]) -> bool:
             if _NUMERIC_VALUE_RE.fullmatch(normalized):
                 return True
     return False
+
+
+def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
+    if event_rows:
+        persist_control_events_batch(event_rows)
+        event_rows.clear()
+    persist_control_states(control_states)
 
 
 def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
@@ -201,6 +209,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
+        pending_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
                 'Procesando volumen shard={} {}/{} mercado={} producto={} codigo={}',
@@ -257,8 +266,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         'empty',
                         'sin_resultados',
                     )
-                    persist_control_events_batch([event_row])
-                    persist_control_states(control_states)
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
                     continue
 
                 validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
@@ -279,8 +289,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     query,
                     'success',
                 )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
+                pending_event_rows.append(event_row)
+                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                    _flush_control_batch(control_states, pending_event_rows)
             except Exception as exc:
                 logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
                 register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query, str(exc))
@@ -293,8 +304,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     'error',
                     str(exc),
                 )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
+                pending_event_rows.append(event_row)
+                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                    _flush_control_batch(control_states, pending_event_rows)
                 shard_errors.append(
                     {
                         'mercado_codigo': query.mercado_codigo or '',
@@ -303,6 +315,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         'motivo': str(exc),
                     }
                 )
+        _flush_control_batch(control_states, pending_event_rows)
         return shard_errors
 
     shard_error_groups = run_shards(

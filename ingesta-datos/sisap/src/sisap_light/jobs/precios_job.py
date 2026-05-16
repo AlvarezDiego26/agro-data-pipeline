@@ -44,6 +44,7 @@ EXPECTED_COLUMNS = [
     'precio_max',
 ]
 MAX_SAMPLE_QUERIES = 12
+CONTROL_FLUSH_EVERY = 20
 
 
 def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
@@ -134,6 +135,13 @@ def _precios_control_scope(query: SisapQuery) -> tuple[str, str]:
     return 'procedencia', query.procedencia_nombre or 'desconocida'
 
 
+def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
+    if event_rows:
+        persist_control_events_batch(event_rows)
+        event_rows.clear()
+    persist_control_states(control_states)
+
+
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
     
@@ -165,6 +173,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
+        pending_event_rows: list[dict[str, object]] = []
         for idx, query in enumerate(shard.items, start=1):
             logger.info(
                 'Procesando precios shard={} {}/{} mercado={} producto={} codigo={}',
@@ -212,16 +221,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         'empty',
                         'sin_resultados',
                     )
-                    persist_control_events_batch([event_row])
-                    persist_control_states(control_states)
-                    shard_errors.append(
-                        {
-                            'mercado_codigo': query.mercado_codigo or '',
-                            'producto_codigo': query.producto_codigo,
-                            'producto_nombre': query.producto_nombre,
-                            'motivo': 'sin_resultados',
-                        }
-                    )
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
                     continue
 
                 validate_expected_columns(df, EXPECTED_COLUMNS, f'precios_{query.producto_codigo}')
@@ -242,8 +244,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     query,
                     'success',
                 )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
+                pending_event_rows.append(event_row)
+                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                    _flush_control_batch(control_states, pending_event_rows)
             except Exception as exc:
                 logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
                 register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query, str(exc))
@@ -256,8 +259,9 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     'error',
                     str(exc),
                 )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
+                pending_event_rows.append(event_row)
+                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                    _flush_control_batch(control_states, pending_event_rows)
                 shard_errors.append(
                     {
                         'mercado_codigo': query.mercado_codigo or '',
@@ -266,6 +270,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         'motivo': str(exc),
                     }
                 )
+        _flush_control_batch(control_states, pending_event_rows)
         return shard_errors
 
     shard_error_groups = run_shards(
