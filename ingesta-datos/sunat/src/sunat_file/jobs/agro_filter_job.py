@@ -35,7 +35,7 @@ def _source_path() -> Path:
 
 def _clean_path() -> str:
     settings = get_settings()
-    return settings.build_delta_uri('exportaciones_filtradas/tablon_maestro_agrario')
+    return settings.build_delta_uri('exportaciones_filtradas')
 
 
 def _get_last_clean_date(uri: str) -> date | None:
@@ -251,7 +251,7 @@ def run_filter_agro() -> dict[str, str | int]:
         # El modo incremental permite ir acumulando historial de diferentes ZIPs
         table_uri = save_delta_table(
             merged_df, 
-            'exportaciones_filtradas/tablon_maestro_agrario', 
+            'exportaciones_filtradas', 
             ['fecha_particion'],
             overwrite=False
         )

@@ -61,7 +61,7 @@ def run_pipeline_main() -> dict[str, object]:
                     'region_summary_path': '',
                     'ubigeo_quality_path': '',
                     'diccionario_path': '',
-                    'clean_path': settings.build_delta_uri('exportaciones_filtradas/tablon_maestro_agrario'),
+                    'clean_path': settings.build_delta_uri('exportaciones_filtradas'),
                 },
                 'control_sync': final_control_sync,
                 'control_events_sync': final_events_sync,
