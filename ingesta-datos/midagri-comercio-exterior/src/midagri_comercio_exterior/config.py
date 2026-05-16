@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     midagri_ce_fecha_corte_fin: str = ""
     midagri_ce_modo_carga: str = "incremental"
     midagri_ce_use_control_table: bool = True
+    midagri_ce_save_remote_listing_dataset: bool = False
+    midagri_ce_save_raw_binary: bool = False
+    midagri_ce_save_base_dataset: bool = False
+    midagri_ce_save_inventory_dataset: bool = True
     midagri_ce_control_dataset: str = "control_state.parquet"
     midagri_ce_control_events_dataset: str = "control_events_local.parquet"
     midagri_ce_inbox_dir: Path = Path("data/inbox/midagri_comercio_exterior")

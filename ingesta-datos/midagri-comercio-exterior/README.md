@@ -2,24 +2,34 @@
 
 Pipeline liviano para descargar, controlar, extraer y normalizar los cuadros de comercio exterior agrario publicados por MIDAGRI.
 
+Por defecto el pipeline prioriza salidas utiles para analisis y deja apagadas las capas tecnicas pesadas.
+
 ## Flujo
 
 1. `remote_scan`: descubre archivos remotos `.xlsx`, `.xls` y `.zip`.
 2. `download`: descarga solo versiones remotas nuevas.
-3. `import`: guarda el binario original y procesa el archivo si su hash no fue importado antes.
-4. `raw_archivos`: conserva el archivo fuente original.
-5. `base_comercio_exterior`: persiste la estructura celda por celda por hoja.
-6. `inventario_hojas_comercio_exterior`: clasifica hojas y encabezados detectados.
-7. `comercio_exterior_agrario`: capa analitica normalizada.
+3. `import`: procesa el archivo si su hash no fue importado antes.
+4. `catalogo_cuadros_comercio_exterior`: resume las hojas detectadas y su clasificacion.
+5. `comercio_exterior_agrario`: capa analitica normalizada.
+6. Capas tecnicas opcionales:
+   - `fuentes_remotas_midagri`
+   - `archivos_fuente_midagri`
+   - `base_comercio_exterior`
 
 ## Salidas
 
-- `raw_archivos`
-- `base_comercio_exterior`
-- `inventario_hojas_comercio_exterior`
 - `comercio_exterior_agrario`
+- `catalogo_cuadros_comercio_exterior`
 - `control_state.parquet`
 - `control_events_local.parquet`
+
+## Capas tecnicas opcionales
+
+Las siguientes capas estan desactivadas por defecto para no ensuciar MinIO:
+
+- `fuentes_remotas_midagri`
+- `archivos_fuente_midagri`
+- `base_comercio_exterior`
 
 ## Periodos
 

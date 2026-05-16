@@ -10,7 +10,7 @@ from midagri_comercio_exterior.config import get_settings
 def save_raw_binary(content: bytes, *, publication_year: int | None, file_name: str) -> str:
     settings = get_settings()
     year_token = str(publication_year or "sin_anio")
-    relative_path = f"raw_archivos/anio_publicacion={year_token}/{file_name}"
+    relative_path = f"archivos_fuente_midagri/anio_publicacion={year_token}/{file_name}"
 
     if settings.is_minio:
         destination = f"s3://{settings.minio_bucket}/{settings.midagri_ce_minio_prefix.strip('/')}/{relative_path}"

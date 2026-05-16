@@ -10,7 +10,7 @@ from collections import defaultdict
 import polars as pl
 
 
-INVENTORY_DATASET = "inventario_hojas_comercio_exterior"
+INVENTORY_DATASET = "catalogo_cuadros_comercio_exterior"
 ANALYTICS_DATASET = "comercio_exterior_agrario"
 
 ANALYTICS_SCHEMA: dict[str, pl.DataType] = {

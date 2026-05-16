@@ -25,7 +25,6 @@ from midagri_comercio_exterior.storage.control import (
 )
 from midagri_comercio_exterior.storage.delta import save_delta_table
 from midagri_comercio_exterior.storage.merge import deduplicate_dataset, normalize_dataset
-from midagri_comercio_exterior.storage.raw import save_raw_binary
 from midagri_comercio_exterior.transformers.analytics import (
     ANALYTICS_DATASET,
     INVENTORY_DATASET,
@@ -34,8 +33,8 @@ from midagri_comercio_exterior.transformers.analytics import (
 )
 
 BASE_DATASET = "base_comercio_exterior"
-REMOTE_LISTING_DATASET = "midagri_remote_files"
-RAW_FILES_DATASET = "raw_archivos"
+REMOTE_LISTING_DATASET = "fuentes_remotas_midagri"
+RAW_FILES_DATASET = "archivos_fuente_midagri"
 SUPPORTED_DIRECT_EXTENSIONS = {".xlsx", ".xls"}
 SUPPORTED_ARCHIVE_EXTENSIONS = {".zip"}
 YEAR_PATTERN = re.compile(r"(20\d{2})")
@@ -233,6 +232,9 @@ def _latest_download_metadata_by_name(source_name: str) -> dict[str, object]:
 def _persist_remote_listing_dataset(discovered_files) -> str:
     if not discovered_files:
         return ""
+    settings = get_settings()
+    if not settings.midagri_ce_save_remote_listing_dataset:
+        return ""
     rows = [
         {
             "archivo_origen": remote_file.file_name,
@@ -350,12 +352,18 @@ def _with_lineage(
 
 
 def _persist_base_dataset(df: pl.DataFrame, *, overwrite: bool = False) -> str:
+    settings = get_settings()
+    if not settings.midagri_ce_save_base_dataset:
+        return ""
     raw_df = normalize_dataset(df, BASE_DATASET)
     raw_df = deduplicate_dataset(raw_df, BASE_DATASET)
     return save_delta_table(raw_df, BASE_DATASET, ["anio_publicacion"], overwrite=overwrite)
 
 
 def _persist_inventory_dataset(df: pl.DataFrame, *, overwrite: bool = False) -> str:
+    settings = get_settings()
+    if not settings.midagri_ce_save_inventory_dataset:
+        return ""
     inventory_df = build_sheet_inventory(df)
     if inventory_df.is_empty():
         return ""
@@ -401,15 +409,11 @@ def _persist_source_dataset(frames: list[pl.DataFrame], *, overwrite: bool = Fal
 
 
 def _process_excel_file(source_path) -> list[str]:
+    settings = get_settings()
     publication_year = _extract_publication_year(source_path.name)
     file_hash = _file_sha256(source_path)
     file_size_bytes = _file_size_bytes(source_path)
     download_metadata = _latest_download_metadata_by_name(source_path.name)
-    save_raw_binary(
-        source_path.read_bytes(),
-        publication_year=publication_year,
-        file_name=source_path.name,
-    )
     df = read_supported_file(source_path)
     df = _with_lineage(
         df,
@@ -419,19 +423,24 @@ def _process_excel_file(source_path) -> list[str]:
         remote_signature=str(download_metadata.get("archivo_firma_remota", "")),
     )
     dataset_names = _persist_source_dataset([df])
-    return [RAW_FILES_DATASET, *dataset_names]
+    if settings.midagri_ce_save_raw_binary:
+        from midagri_comercio_exterior.storage.raw import save_raw_binary
+
+        save_raw_binary(
+            source_path.read_bytes(),
+            publication_year=publication_year,
+            file_name=source_path.name,
+        )
+        return [RAW_FILES_DATASET, *dataset_names]
+    return dataset_names
 
 
 def _process_zip_file(source_path) -> list[str]:
+    settings = get_settings()
     publication_year = _extract_publication_year(source_path.name)
     file_hash = _file_sha256(source_path)
     file_size_bytes = _file_size_bytes(source_path)
     download_metadata = _latest_download_metadata_by_name(source_path.name)
-    save_raw_binary(
-        source_path.read_bytes(),
-        publication_year=publication_year,
-        file_name=source_path.name,
-    )
     temp_dir, members = extract_supported_zip_members(source_path)
     frames: list[pl.DataFrame] = []
     try:
@@ -451,7 +460,16 @@ def _process_zip_file(source_path) -> list[str]:
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
     dataset_names = _persist_source_dataset(frames)
-    return [RAW_FILES_DATASET, *dataset_names]
+    if settings.midagri_ce_save_raw_binary:
+        from midagri_comercio_exterior.storage.raw import save_raw_binary
+
+        save_raw_binary(
+            source_path.read_bytes(),
+            publication_year=publication_year,
+            file_name=source_path.name,
+        )
+        return [RAW_FILES_DATASET, *dataset_names]
+    return dataset_names
 
 
 def _rebuild_excel_file(source_path: Path) -> list[str]:

@@ -3,9 +3,9 @@ from __future__ import annotations
 import polars as pl
 
 DATASET_BUSINESS_KEYS = {
-    "midagri_remote_files": ["archivo_firma_remota"],
+    "fuentes_remotas_midagri": ["archivo_firma_remota"],
     "base_comercio_exterior": ["registro_hash_fuente"],
-    "inventario_hojas_comercio_exterior": ["registro_hash_fuente"],
+    "catalogo_cuadros_comercio_exterior": ["registro_hash_fuente"],
     "comercio_exterior_agrario": ["registro_hash_fuente"],
 }
 
