@@ -52,6 +52,23 @@ ANALYTICS_SCHEMA: dict[str, pl.DataType] = {
     "registro_hash_fuente": pl.Utf8,
 }
 
+INVENTORY_SCHEMA: dict[str, pl.DataType] = {
+    "archivo_origen": pl.Utf8,
+    "archivo_miembro": pl.Utf8,
+    "tipo_archivo_origen": pl.Utf8,
+    "archivo_anio_publicacion": pl.Int32,
+    "archivo_fecha_descarga": pl.Utf8,
+    "anio_publicacion": pl.Utf8,
+    "hoja_nombre": pl.Utf8,
+    "hoja_titulo": pl.Utf8,
+    "header_signature": pl.Utf8,
+    "tipo_hoja": pl.Utf8,
+    "flujo": pl.Utf8,
+    "frecuencia": pl.Utf8,
+    "filas_detectadas": pl.Int32,
+    "registro_hash_fuente": pl.Utf8,
+}
+
 MONTH_INDEX = {
     "enero": 1,
     "febrero": 2,
@@ -197,7 +214,7 @@ def _detect_sheet_type(title: str) -> tuple[str, str, str]:
 
 def build_sheet_inventory(base_df: pl.DataFrame) -> pl.DataFrame:
     if base_df.is_empty():
-        return pl.DataFrame()
+        return pl.DataFrame(schema=INVENTORY_SCHEMA)
 
     records: list[dict[str, object]] = []
     group_cols = [
@@ -232,7 +249,16 @@ def build_sheet_inventory(base_df: pl.DataFrame) -> pl.DataFrame:
         }
         record["registro_hash_fuente"] = _hash_record(record)
         records.append(record)
-    return pl.DataFrame(records) if records else pl.DataFrame()
+    if not records:
+        return pl.DataFrame(schema=INVENTORY_SCHEMA)
+    return pl.DataFrame(records, schema=INVENTORY_SCHEMA).with_columns(
+        pl.col("archivo_miembro").fill_null(""),
+        pl.col("header_signature").fill_null(""),
+        pl.col("hoja_titulo").fill_null(""),
+        pl.col("tipo_hoja").fill_null(""),
+        pl.col("flujo").fill_null(""),
+        pl.col("frecuencia").fill_null(""),
+    )
 
 
 def _metadata_from_sheet_df(sheet_df: pl.DataFrame, title: str, sheet_type: str, flujo: str, frecuencia: str) -> dict[str, object]:
