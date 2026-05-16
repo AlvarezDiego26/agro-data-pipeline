@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import polars as pl
 from loguru import logger
@@ -51,7 +52,24 @@ EXPECTED_COLUMNS = [
     'procedencia',
     'volumen_ton',
 ]
+
 MAX_SAMPLE_QUERIES = 12
+_NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+_DATE_VALUE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+
+
+def _table_has_materialized_values(rows: list[list[str]]) -> bool:
+    for row in rows[1:]:
+        for cell in row[1:]:
+            value = (cell or '').strip()
+            if not value or value in {'...', '....', '-'}:
+                continue
+            normalized = value.replace(',', '')
+            if _DATE_VALUE_RE.fullmatch(value):
+                continue
+            if _NUMERIC_VALUE_RE.fullmatch(normalized):
+                return True
+    return False
 
 
 def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
@@ -133,11 +151,11 @@ def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[
     raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
 
 
-def _normalize_report(query: SisapQuery, report_html: str) -> pl.DataFrame:
-    rows = detect_primary_table(report_html)
-    if not rows:
+def _normalize_report(query: SisapQuery, report_html: str, rows: list[list[str]] | None = None) -> pl.DataFrame:
+    parsed_rows = rows or detect_primary_table(report_html)
+    if not parsed_rows:
         return pl.DataFrame()
-    return build_volumen_frame(rows, query=query)
+    return build_volumen_frame(parsed_rows, query=query)
 
 
 def run_sample() -> Path:
@@ -176,7 +194,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         plan,
         group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
         chunk_size=settings.product_batch_size,
-        shard_prefix='volumen-consolidada',
+        shard_prefix=(f'volumen-{scope_label}-{scope_value}'[:80]),
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
@@ -200,7 +218,8 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 snap_path = save_html_snapshot(
                     ModuloSisap.MAYORISTA_VOLUMEN, query, report_html, suffix='fetched'
                 )
-                df = _normalize_report(query, report_html)
+                rows = detect_primary_table(report_html)
+                df = _normalize_report(query, report_html, rows=rows)
 
                 if df.is_empty():
                     sig = quick_html_data_signals(report_html)
@@ -215,10 +234,10 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         snap_path.resolve(),
                         sig,
                     )
-                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                    if rows and _table_has_materialized_values(rows):
                         logger.warning(
-                            'El HTML contiene tablas y fechas tipo dd/mm/aaaa; si el portal muestra datos, '
-                            'el fallo probable es del parser (detect_primary_table / build_volumen_frame), no del request.'
+                            'El HTML trae celdas con valores, pero el dataframe quedo vacio; '
+                            'esto si apunta a parser/transformer (detect_primary_table / build_volumen_frame).'
                         )
                     register_control_success(
                         control_states,
@@ -240,14 +259,6 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     )
                     persist_control_events_batch([event_row])
                     persist_control_states(control_states)
-                    shard_errors.append(
-                        {
-                            'mercado_codigo': query.mercado_codigo or '',
-                            'producto_codigo': query.producto_codigo,
-                            'producto_nombre': query.producto_nombre,
-                            'motivo': 'sin_resultados',
-                        }
-                    )
                     continue
 
                 validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
