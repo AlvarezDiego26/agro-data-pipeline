@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import polars as pl
+from loguru import logger
 
 DATASET_BUSINESS_KEYS = {
     "precios_diarios_mercado_lima": [
@@ -141,6 +142,32 @@ def deduplicate_dataset(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
         .filter(pl.col("conflict_count") > 1)
     )
     if duplicate_groups.height > 0:
+        if dataset_root_name(dataset_name) == "volumen_diario_mercado_lima":
+            conflict_rows = int(duplicate_groups.get_column("conflict_count").sum())
+            logger.warning(
+                "Se consolidaran {} filas conflictivas en {} usando suma de volumen_ton por llave {}.",
+                conflict_rows,
+                dataset_name,
+                business_keys,
+            )
+            aggregated_expressions: list[pl.Expr] = []
+            for column, dtype in unique_df.schema.items():
+                if column in business_keys:
+                    continue
+                if column == "volumen_ton":
+                    aggregated_expressions.append(
+                        pl.col(column).cast(pl.Float64, strict=False).sum().alias(column)
+                    )
+                elif dtype in (pl.Utf8, pl.String, pl.Categorical):
+                    aggregated_expressions.append(
+                        pl.col(column).drop_nulls().first().fill_null("").alias(column)
+                    )
+                else:
+                    aggregated_expressions.append(pl.col(column).drop_nulls().first().alias(column))
+
+            resolved_df = unique_df.group_by(business_keys, maintain_order=True).agg(aggregated_expressions)
+            return resolved_df.select(unique_df.columns)
+
         sample_conflicts = (
             unique_df.join(
                 duplicate_groups.select(business_keys),

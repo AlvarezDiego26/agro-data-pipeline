@@ -10,6 +10,7 @@ class SisapHttpClient:
         settings = get_settings()
         self.timeout = settings.sisap_timeout_seconds
         self.retry_intentos = settings.sisap_retry_intentos
+        self._client = httpx.Client(timeout=self.timeout, follow_redirects=True)
         self.retry_policy = Retrying(
             stop=stop_after_attempt(max(int(self.retry_intentos or 1), 1)),
             wait=wait_exponential(multiplier=1, min=1, max=8),
@@ -19,20 +20,27 @@ class SisapHttpClient:
     def get(self, url: str, params: dict | None = None) -> str:
         def _request() -> str:
             logger.info("GET {url}", url=url)
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                response = client.get(url, params=params)
-                response.raise_for_status()
-                return response.text
+            response = self._client.get(url, params=params)
+            response.raise_for_status()
+            return response.text
 
         return self.retry_policy(_request)
 
     def post(self, url: str, data: dict | None = None) -> str:
         def _request() -> str:
             logger.info("POST {url}", url=url)
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                response = client.post(url, data=data)
-                response.raise_for_status()
-                return response.text
+            response = self._client.post(url, data=data)
+            response.raise_for_status()
+            return response.text
 
         return self.retry_policy(_request)
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
