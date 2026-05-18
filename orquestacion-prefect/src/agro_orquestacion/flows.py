@@ -213,6 +213,51 @@ def run_duckdb_refresh_task(force_rebuild: bool = True) -> None:
     logger.info("[DuckDB] Snapshot publicado en %s", snapshot_path)
 
 
+@task(
+    retries=2,
+    retry_delay_seconds=[60, 300],
+    tags=["serving-publish"]
+)
+def publish_serving_task() -> None:
+    settings = get_settings()
+    logger = get_run_logger()
+
+    snapshot_path = settings.duckdb_snapshot_database_path
+    api_root = settings.agro_analitica_api_root
+    env_path = settings.agro_analitica_api_env_path
+
+    if not snapshot_path.exists() or snapshot_path.stat().st_size <= 0:
+        raise RuntimeError(
+            f"No existe un snapshot valido para publicar en serving: {snapshot_path}."
+        )
+
+    if not env_path.exists():
+        raise RuntimeError(
+            f"No existe el archivo .env requerido para publicar serving: {env_path}."
+        )
+
+    logger.info("[Serving] Publicando snapshot %s a PostgreSQL/Supabase", snapshot_path.name)
+    run_command(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--env-file",
+            str(env_path),
+            "-v",
+            f"{settings.agro_analitica_root}:/workspace/agro-analitica",
+            "-w",
+            "/workspace/agro-analitica/api",
+            settings.serving_publish_node_image,
+            "bash",
+            "-lc",
+            "npm install && npm run publish:serving",
+        ],
+        working_dir=api_root,
+        environment={},
+    )
+
+
 @flow(name="duckdb-refresh-flow", log_prints=True)
 def duckdb_refresh_flow(force_rebuild: bool = True) -> None:
     settings = get_settings()
@@ -221,6 +266,21 @@ def duckdb_refresh_flow(force_rebuild: bool = True) -> None:
     run_duckdb_refresh_task.with_options(
         timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes
     )(force_rebuild=force_rebuild)
+
+
+@flow(name="serving-sync-flow", log_prints=True)
+def serving_sync_flow(force_rebuild: bool = True) -> None:
+    settings = get_settings()
+    if not settings.prefect_enable_serving_sync:
+        return
+
+    run_duckdb_refresh_task.with_options(
+        timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes
+    )(force_rebuild=force_rebuild)
+
+    publish_serving_task.with_options(
+        timeout_seconds=60 * settings.prefect_serving_sync_timeout_minutes
+    )()
 
 
 def _run_sisap_module_task(
@@ -702,6 +762,8 @@ def _main() -> None:
         midagri_ce_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_ce_timeout_minutes)()
     elif mode == "duckdb-refresh":
         duckdb_refresh_flow.with_options(timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes)()
+    elif mode == "serving-sync":
+        serving_sync_flow.with_options(timeout_seconds=60 * settings.prefect_serving_sync_timeout_minutes)()
     else:
         agro_ingesta_flow()
 

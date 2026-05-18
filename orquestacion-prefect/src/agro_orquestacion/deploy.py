@@ -12,6 +12,7 @@ from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
     duckdb_refresh_flow,
     midagri_ce_main_flow,
+    serving_sync_flow,
     sisap_precios_flow,
     sisap_regiones_flow,
     sisap_volumen_flow,
@@ -289,6 +290,28 @@ def _deploy_managed(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    serving_sync_flow.from_source(
+        source=source,
+        entrypoint=_entrypoint("serving_sync_flow"),
+    ).deploy(
+        name="serving-sync-managed",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_serving_sync_deployment_concurrency_limit),
+        **_duckdb_schedule_kwargs(
+            settings.prefect_enable_serving_sync_schedule and settings.prefect_enable_serving_sync,
+            settings.prefect_serving_sync_interval_hours,
+        ),
+        parameters={
+            "force_rebuild": True,
+        },
+        job_variables={
+            "pip_packages": settings.prefect_requirements,
+            "env": duckdb_runtime_env,
+        },
+        tags=["serving", "managed", "sync"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
 def _deploy_process(settings) -> None:
     runtime_pythonpath = str(settings.orquestacion_root / "src")
     working_dir = str(settings.repo_root)
@@ -442,6 +465,22 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    serving_sync = serving_sync_flow.to_deployment(
+        name="serving-sync-local",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_serving_sync_deployment_concurrency_limit),
+        **_duckdb_schedule_kwargs(
+            settings.prefect_enable_serving_sync_schedule and settings.prefect_enable_serving_sync,
+            settings.prefect_serving_sync_interval_hours,
+        ),
+        parameters={
+            "force_rebuild": True,
+        },
+        job_variables=duckdb_job_variables,
+        tags=["serving", "local", "process", "sync"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     deploy_runner(
         sisap_precios,
         sisap_volumen,
@@ -449,6 +488,7 @@ def _deploy_process(settings) -> None:
         sunat_main,
         midagri_ce_main,
         duckdb_refresh,
+        serving_sync,
         work_pool_name=settings.prefect_target_work_pool_name,
         build=False,
         push=False,

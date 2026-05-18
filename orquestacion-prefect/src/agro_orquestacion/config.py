@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     prefect_enable_midagri_ce: bool = True
     prefect_enable_duckdb_refresh: bool = True
     prefect_enable_duckdb_refresh_schedule: bool = False
+    prefect_enable_serving_sync: bool = True
+    prefect_enable_serving_sync_schedule: bool = False
     prefect_duckdb_refresh_after_ingesta: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
@@ -32,12 +34,15 @@ class Settings(BaseSettings):
     prefect_midagri_ce_timeout_minutes: int = 120
     prefect_duckdb_refresh_interval_hours: int = 6
     prefect_duckdb_refresh_timeout_minutes: int = 90
+    prefect_serving_sync_interval_hours: int = 12
+    prefect_serving_sync_timeout_minutes: int = 120
     prefect_worker_process_limit: int = 1
     prefect_max_parallel_pipelines: int = 1
     prefect_sisap_deployment_concurrency_limit: int = 1
     prefect_sunat_deployment_concurrency_limit: int = 1
     prefect_midagri_ce_deployment_concurrency_limit: int = 1
     prefect_duckdb_deployment_concurrency_limit: int = 1
+    prefect_serving_sync_deployment_concurrency_limit: int = 1
     prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
     prefect_repo_branch: str = "main"
     prefect_github_access_token: str = ""
@@ -51,6 +56,7 @@ class Settings(BaseSettings):
     duckdb_build_database_name: str = "agro_build.duckdb"
     duckdb_snapshot_database_name: str = "agro_api_snapshot.duckdb"
     duckdb_build_init_sql_path: str = "/sql/51-build-api-cache-fast.sql"
+    serving_publish_node_image: str = "node:20-bookworm"
     duckdb_minio_endpoint: str = ""
     minio_endpoint: str = "http://minio-api:9000"
     minio_access_key: str = ""
@@ -136,6 +142,14 @@ class Settings(BaseSettings):
     @property
     def duckdb_data_path(self) -> Path:
         return self.duckdb_runtime_path / "data"
+
+    @property
+    def agro_analitica_api_root(self) -> Path:
+        return self.agro_analitica_root / "api"
+
+    @property
+    def agro_analitica_api_env_path(self) -> Path:
+        return self.agro_analitica_api_root / ".env"
 
     @property
     def duckdb_build_database_path(self) -> Path:
