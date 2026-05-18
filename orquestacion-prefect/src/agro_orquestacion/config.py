@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     delta_enabled: bool = True
     duckdb_container_name: str = "duckdb-agro"
     duckdb_runtime_root: str = ""
+    agro_analitica_host_root: str = ""
     duckdb_build_database_name: str = "agro_build.duckdb"
     duckdb_snapshot_database_name: str = "agro_api_snapshot.duckdb"
     duckdb_build_init_sql_path: str = "/sql/51-build-api-cache-fast.sql"
@@ -134,6 +135,12 @@ class Settings(BaseSettings):
         return self.repo_root.parent / "agro-analitica"
 
     @property
+    def agro_analitica_host_path(self) -> Path:
+        if self.agro_analitica_host_root:
+            return Path(self.agro_analitica_host_root).resolve()
+        return self.agro_analitica_root
+
+    @property
     def duckdb_runtime_path(self) -> Path:
         if self.duckdb_runtime_root:
             return Path(self.duckdb_runtime_root).resolve()
@@ -150,6 +157,10 @@ class Settings(BaseSettings):
     @property
     def agro_analitica_api_env_path(self) -> Path:
         return self.agro_analitica_api_root / ".env"
+
+    @property
+    def agro_analitica_host_api_env_path(self) -> Path:
+        return self.agro_analitica_host_path / "api" / ".env"
 
     @property
     def duckdb_build_database_path(self) -> Path:

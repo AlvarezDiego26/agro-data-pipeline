@@ -223,8 +223,8 @@ def publish_serving_task() -> None:
     logger = get_run_logger()
 
     snapshot_path = settings.duckdb_snapshot_database_path
-    api_root = settings.agro_analitica_api_root
-    env_path = settings.agro_analitica_api_env_path
+    host_root = settings.agro_analitica_host_path
+    env_path = settings.agro_analitica_host_api_env_path
 
     if not snapshot_path.exists() or snapshot_path.stat().st_size <= 0:
         raise RuntimeError(
@@ -245,7 +245,7 @@ def publish_serving_task() -> None:
             "--env-file",
             str(env_path),
             "-v",
-            f"{settings.agro_analitica_root}:/workspace/agro-analitica",
+            f"{host_root}:/workspace/agro-analitica",
             "-w",
             "/workspace/agro-analitica/api",
             settings.serving_publish_node_image,
@@ -253,7 +253,7 @@ def publish_serving_task() -> None:
             "-lc",
             "npm install && npm run publish:serving",
         ],
-        working_dir=api_root,
+        working_dir=settings.orquestacion_root,
         environment={},
     )
 
