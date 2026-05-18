@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     duckdb_build_database_name: str = "agro_build.duckdb"
     duckdb_snapshot_database_name: str = "agro_api_snapshot.duckdb"
     duckdb_build_init_sql_path: str = "/sql/51-build-api-cache-fast.sql"
+    duckdb_minio_endpoint: str = ""
     minio_endpoint: str = "http://minio-api:9000"
     minio_access_key: str = ""
     minio_secret_key: str = ""
@@ -250,6 +251,10 @@ class Settings(BaseSettings):
             "DUCKDB_BUILD_DATABASE_NAME": self.duckdb_build_database_name,
             "DUCKDB_SNAPSHOT_DATABASE_NAME": self.duckdb_snapshot_database_name,
             "DUCKDB_BUILD_INIT_SQL_PATH": self.duckdb_build_init_sql_path,
+            "DUCKDB_MINIO_ENDPOINT": self.duckdb_minio_endpoint or self.minio_endpoint,
+            "MINIO_ACCESS_KEY": self.minio_access_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
+            "MINIO_REGION": self.minio_region,
         }
 
 

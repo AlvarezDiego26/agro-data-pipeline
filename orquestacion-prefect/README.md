@@ -69,6 +69,7 @@ PREFECT_GITHUB_SECRET_BLOCK_NAME=github-repo-read-token
 STORAGE_BACKEND=minio
 DELTA_ENABLED=true
 MINIO_ENDPOINT=http://minio-api:9000
+DUCKDB_MINIO_ENDPOINT=http://ip-interna-vps:30090
 MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 MINIO_BUCKET=nombre-del-bucket
@@ -250,6 +251,7 @@ Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regio
 - mantener `PREFECT_DUCKDB_REFRESH_AFTER_INGESTA=false` si la ingesta es continua
 - usar `concurrency_limit=1` para que nunca se solapen dos refresh del snapshot
 - hacer que la API lea siempre el ultimo `agro_api_snapshot.duckdb` publicado
+- si `DuckDB` no puede leer `MinIO` por la IP publica del servidor, usar `DUCKDB_MINIO_ENDPOINT` con la IP interna o una ruta privada sin cambiar el endpoint que ya usa la ingesta
 
 ## Principio De Diseño
 - `Prefect` orquesta

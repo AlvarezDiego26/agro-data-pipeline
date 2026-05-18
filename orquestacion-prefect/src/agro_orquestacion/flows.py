@@ -20,6 +20,22 @@ def _merge_env(base_env: dict[str, str], overrides: dict[str, str | int | None])
     return merged
 
 
+def _build_duckdb_init_sql(settings) -> Path:
+    runtime_root = settings.duckdb_runtime_path
+    source_path = runtime_root / "sql" / Path(settings.duckdb_build_init_sql_path).name
+    output_path = runtime_root / "sql" / "51-build-api-cache-fast.runtime.sql"
+
+    source_sql = source_path.read_text(encoding="utf-8")
+    rendered_sql = source_sql.format(
+        duckdb_minio_endpoint=settings.duckdb_minio_endpoint or settings.minio_endpoint,
+        minio_access_key=settings.minio_access_key,
+        minio_secret_key=settings.minio_secret_key,
+        minio_region=settings.minio_region,
+    )
+    output_path.write_text(rendered_sql, encoding="utf-8")
+    return output_path
+
+
 @task(
     retries=5, 
     retry_delay_seconds=[60, 300, 600, 1200, 1800], 
@@ -166,6 +182,7 @@ def run_duckdb_refresh_task(force_rebuild: bool = True) -> None:
 
     runtime_root.mkdir(parents=True, exist_ok=True)
     build_path.parent.mkdir(parents=True, exist_ok=True)
+    init_sql_path = _build_duckdb_init_sql(settings)
 
     if force_rebuild:
         for stale_path in (build_path, snapshot_path, wal_path):
@@ -181,7 +198,7 @@ def run_duckdb_refresh_task(force_rebuild: bool = True) -> None:
             "/duckdb",
             f"/data/{settings.duckdb_build_database_name}",
             "-init",
-            settings.duckdb_build_init_sql_path,
+            f"/sql/{init_sql_path.name}",
             "-c",
             "SHOW TABLES;",
         ],
