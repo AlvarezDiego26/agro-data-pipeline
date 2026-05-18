@@ -10,6 +10,7 @@ from prefect.types.entrypoint import EntrypointType
 
 from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
+    duckdb_refresh_flow,
     midagri_ce_main_flow,
     sisap_precios_flow,
     sisap_regiones_flow,
@@ -46,6 +47,12 @@ def _schedule_kwargs(enabled: bool, hours: int, is_sunat: bool = False, minute_o
     # SISAP corre cada 4 horas, pero escalonado por el minuto especificado
     # Ejemplo: minuto 0, 10, 20...
     return {"schedule": CronSchedule(cron=f"{minute_offset} */4 * * *")}
+
+
+def _duckdb_schedule_kwargs(enabled: bool, hours: int) -> dict[str, any]:
+    if not enabled:
+        return {"schedule": None}
+    return {"schedule": IntervalSchedule(interval=timedelta(hours=max(hours, 1)))}
 
 
 def _build_source(settings) -> GitRepository:
@@ -108,6 +115,10 @@ def _deploy_managed(settings) -> None:
     )
     midagri_runtime_env = _runtime_env(
         settings.midagri_ce_env(),
+        pythonpath=_managed_pythonpath(),
+    )
+    duckdb_runtime_env = _runtime_env(
+        settings.duckdb_env(),
         pythonpath=_managed_pythonpath(),
     )
 
@@ -256,6 +267,28 @@ def _deploy_managed(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    duckdb_refresh_flow.from_source(
+        source=source,
+        entrypoint=_entrypoint("duckdb_refresh_flow"),
+    ).deploy(
+        name="duckdb-refresh-managed",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_duckdb_deployment_concurrency_limit),
+        **_duckdb_schedule_kwargs(
+            settings.prefect_enable_duckdb_refresh_schedule and settings.prefect_enable_duckdb_refresh,
+            settings.prefect_duckdb_refresh_interval_hours,
+        ),
+        parameters={
+            "force_rebuild": True,
+        },
+        job_variables={
+            "pip_packages": settings.prefect_requirements,
+            "env": duckdb_runtime_env,
+        },
+        tags=["duckdb", "managed", "serving"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
 def _deploy_process(settings) -> None:
     runtime_pythonpath = str(settings.orquestacion_root / "src")
     working_dir = str(settings.repo_root)
@@ -269,6 +302,10 @@ def _deploy_process(settings) -> None:
     }
     midagri_job_variables = {
         "env": _runtime_env(settings.midagri_ce_env(), pythonpath=runtime_pythonpath),
+        "working_dir": working_dir,
+    }
+    duckdb_job_variables = {
+        "env": _runtime_env(settings.duckdb_env(), pythonpath=runtime_pythonpath),
         "working_dir": working_dir,
     }
 
@@ -389,12 +426,29 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    duckdb_refresh = duckdb_refresh_flow.to_deployment(
+        name="duckdb-refresh-local",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_duckdb_deployment_concurrency_limit),
+        **_duckdb_schedule_kwargs(
+            settings.prefect_enable_duckdb_refresh_schedule and settings.prefect_enable_duckdb_refresh,
+            settings.prefect_duckdb_refresh_interval_hours,
+        ),
+        parameters={
+            "force_rebuild": True,
+        },
+        job_variables=duckdb_job_variables,
+        tags=["duckdb", "local", "process", "serving"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     deploy_runner(
         sisap_precios,
         sisap_volumen,
         sisap_regiones,
         sunat_main,
         midagri_ce_main,
+        duckdb_refresh,
         work_pool_name=settings.prefect_target_work_pool_name,
         build=False,
         push=False,

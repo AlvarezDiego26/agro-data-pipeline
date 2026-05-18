@@ -3,8 +3,9 @@
 Capa de orquestacion para ejecutar `SISAP` y `SUNAT` con `Prefect` sin duplicar la logica de negocio de cada pipeline.
 
 ## Objetivo
-- encapsular las corridas de `SISAP` y `SUNAT` como flows independientes
+- encapsular las corridas de `SISAP`, `SUNAT` y el serving de `DuckDB` como flows independientes
 - permitir una capa maestra para `SISAP` que lance unidades autonomas en paralelo
+- separar la ingesta Delta del refresh del snapshot que consume la API
 - dejar listo el despliegue sobre `Prefect Cloud` tanto en `managed pool` como en `process worker` local
 
 ## Que Orquesta
@@ -23,9 +24,13 @@ Ejecuta:
 - `python -m sunat_file.cli run-main`
 
 ### `agro_ingesta_flow`
-Ejecuta en secuencia:
-1. `SISAP` maestro
-2. `SUNAT`
+Ejecuta la ingesta de `SISAP` y `SUNAT` y, si se habilita por configuracion, dispara al final el refresh de `DuckDB`.
+
+### `duckdb_refresh_flow`
+Ejecuta el serving de `DuckDB`:
+- construye `agro_build.duckdb`
+- publica `agro_api_snapshot.duckdb`
+- deja listo el snapshot que consume la API en modo solo lectura
 
 ## Estructura
 - `src/agro_orquestacion/config.py`
@@ -33,7 +38,7 @@ Ejecuta en secuencia:
 - `src/agro_orquestacion/runner.py`
   - ejecuta modulos Python y retransmite logs a `Prefect`
 - `src/agro_orquestacion/flows.py`
-  - flows de `SISAP`, `SUNAT` y combinado
+  - flows de `SISAP`, `SUNAT`, `DuckDB` y combinado
 - `src/agro_orquestacion/deploy.py`
   - helper para publicar deployments `managed` o `process`
 - `src/agro_orquestacion/serve.py`
@@ -68,6 +73,15 @@ MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 MINIO_BUCKET=nombre-del-bucket
 MINIO_REGION=us-east-1
+DUCKDB_CONTAINER_NAME=duckdb-agro
+DUCKDB_RUNTIME_ROOT=/ruta/real/a/agro-analitica/db/duckdb/runtime
+DUCKDB_BUILD_DATABASE_NAME=agro_build.duckdb
+DUCKDB_SNAPSHOT_DATABASE_NAME=agro_api_snapshot.duckdb
+DUCKDB_BUILD_INIT_SQL_PATH=/sql/51-build-api-cache-fast.sql
+PREFECT_ENABLE_DUCKDB_REFRESH=true
+PREFECT_ENABLE_DUCKDB_REFRESH_SCHEDULE=true
+PREFECT_DUCKDB_REFRESH_AFTER_INGESTA=false
+PREFECT_DUCKDB_REFRESH_INTERVAL_HOURS=12
 SISAP_MINIO_PREFIX=Landing/sisap
 SUNAT_MINIO_PREFIX=Landing/sunat
 SISAP_ESTRATEGIA_INSTANCIACION=por_modulo
@@ -112,6 +126,11 @@ python -m agro_orquestacion.flows sisap-main
 ### SUNAT
 ```powershell
 python -m agro_orquestacion.flows sunat
+```
+
+### DuckDB refresh
+```powershell
+python -m agro_orquestacion.flows duckdb-refresh
 ```
 
 ### Flujo combinado
@@ -187,6 +206,8 @@ Si `PREFECT_EXECUTION_MODE=managed`, publica:
 - `sisap-precios-managed`
 - `sisap-regiones-managed`
 - `sunat-managed`
+- `midagri-ce-managed`
+- `duckdb-refresh-managed`
 
 en el work pool configurado para `managed`.
 
@@ -196,6 +217,8 @@ Si `PREFECT_EXECUTION_MODE=process`, publica:
 - `sisap-precios-local`
 - `sisap-regiones-local`
 - `sunat-local`
+- `midagri-ce-local`
+- `duckdb-refresh-local`
 
 en el work pool configurado para `process`.
 
@@ -218,7 +241,15 @@ Levantar el worker local desde la raiz del repo:
 prefect worker start --pool "agro-process-pool" --type process --limit 4
 ```
 
-Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regiones-local` y `sunat-local` ya generan logs reales del Python que se ejecuta en tu maquina.
+Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regiones-local`, `sunat-local` y `duckdb-refresh-local` ya generan logs reales del Python que se ejecuta en tu maquina.
+
+## Estrategia Recomendada Para DuckDB
+- dejar que la ingesta siga escribiendo Delta en `MinIO`
+- correr `duckdb_refresh_flow` en una frecuencia separada del scraping
+- empezar con `PREFECT_DUCKDB_REFRESH_INTERVAL_HOURS=12`
+- mantener `PREFECT_DUCKDB_REFRESH_AFTER_INGESTA=false` si la ingesta es continua
+- usar `concurrency_limit=1` para que nunca se solapen dos refresh del snapshot
+- hacer que la API lea siempre el ultimo `agro_api_snapshot.duckdb` publicado
 
 ## Principio De Diseño
 - `Prefect` orquesta
@@ -226,3 +257,19 @@ Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regio
 - `SISAP` maestro reparte unidades pequenas para que una falla no frene a las demas
 - `MinIO` sigue siendo el destino operativo de `Delta`
 - el control sigue viviendo dentro de cada pipeline, no en la capa de orquestacion
+
+
+## DuckDB En El Stack Docker
+El `docker-compose.yml` del orquestador ahora tambien levanta `duckdb-agro` como servicio hermano de `Prefect`.
+
+Esto permite que:
+- la ingesta siga escribiendo Delta en `MinIO`
+- `duckdb-refresh-flow` construya `agro_build.duckdb`
+- publique `agro_api_snapshot.duckdb`
+- la API consuma solo el snapshot final
+
+El worker de `Prefect` monta:
+- `/agro-analitica`
+- `/var/run/docker.sock`
+
+para poder ejecutar el refresh via `docker exec` sin tocar la logica del scraper.

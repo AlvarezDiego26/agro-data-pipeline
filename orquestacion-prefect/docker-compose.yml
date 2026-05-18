@@ -63,21 +63,44 @@ services:
       PREFECT_REDIS_MESSAGING_DB: 0
     command: prefect server services start
 
+  duckdb:
+    image: duckdb/duckdb:latest
+    container_name: duckdb-agro
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+    working_dir: /data
+    command: ["/duckdb", ":memory:"]
+    ports:
+      - "4213:4213"
+    volumes:
+      - ../../agro-analitica/db/duckdb/runtime/data:/data
+      - ../../agro-analitica/db/duckdb/runtime/scripts:/scripts
+      - ../../agro-analitica/db/duckdb/runtime/sql:/sql
+      - ../../agro-analitica/db/duckdb/validation:/validation
+    restart: unless-stopped
+
   prefect-worker:
     image: prefecthq/prefect:3-latest
     container_name: prefect-worker
     depends_on:
       prefect-server:
         condition: service_healthy
+      duckdb:
+        condition: service_started
     env_file:
       - .env
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
     volumes:
       - ..:/app
+      - ../../agro-analitica:/agro-analitica
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app
     command: >
       bash -c "
+        command -v docker >/dev/null 2>&1 || (apt-get update && apt-get install -y docker.io) &&
         cd /app/orquestacion-prefect &&
         pip install -e . &&
         prefect worker start --pool local-pool --type process --limit $${PREFECT_WORKER_PROCESS_LIMIT:-1}

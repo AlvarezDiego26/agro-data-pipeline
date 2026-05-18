@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import concurrent.futures
+import shutil
 import sys
+from pathlib import Path
 
 from prefect import flow, task
+from prefect.logging import get_run_logger
 
 from agro_orquestacion.config import get_settings
-from agro_orquestacion.runner import ensure_runtime_python, run_python_module
+from agro_orquestacion.runner import ensure_runtime_python, run_command, run_python_module
 
 
 def _merge_env(base_env: dict[str, str], overrides: dict[str, str | int | None]) -> dict[str, str]:
@@ -145,6 +148,62 @@ def run_midagri_ce_task(
         environment=environment,
         python_executable=python_executable,
     )
+
+
+@task(
+    retries=2,
+    retry_delay_seconds=[60, 300],
+    tags=["duckdb-refresh"]
+)
+def run_duckdb_refresh_task(force_rebuild: bool = True) -> None:
+    settings = get_settings()
+    logger = get_run_logger()
+
+    runtime_root = settings.duckdb_runtime_path
+    build_path = settings.duckdb_build_database_path
+    snapshot_path = settings.duckdb_snapshot_database_path
+    wal_path = Path(f"{build_path}.wal")
+
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    build_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if force_rebuild:
+        for stale_path in (build_path, snapshot_path, wal_path):
+            if stale_path.exists():
+                stale_path.unlink()
+
+    logger.info("[DuckDB] Construyendo cache en %s", build_path.name)
+    run_command(
+        [
+            "docker",
+            "exec",
+            settings.duckdb_container_name,
+            "/duckdb",
+            f"/data/{settings.duckdb_build_database_name}",
+            "-init",
+            settings.duckdb_build_init_sql_path,
+            "-c",
+            "SHOW TABLES;",
+        ],
+        working_dir=runtime_root,
+        environment=settings.duckdb_env(),
+    )
+
+    if not build_path.exists() or build_path.stat().st_size <= 0:
+        raise RuntimeError(f"DuckDB no genero un build valido en {build_path}.")
+
+    shutil.copy2(build_path, snapshot_path)
+    logger.info("[DuckDB] Snapshot publicado en %s", snapshot_path)
+
+
+@flow(name="duckdb-refresh-flow", log_prints=True)
+def duckdb_refresh_flow(force_rebuild: bool = True) -> None:
+    settings = get_settings()
+    if not settings.prefect_enable_duckdb_refresh:
+        return
+    run_duckdb_refresh_task.with_options(
+        timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes
+    )(force_rebuild=force_rebuild)
 
 
 def _run_sisap_module_task(
@@ -556,6 +615,7 @@ def agro_ingesta_flow(
     sisap_fecha_fin: str | None = None,
     sunat_fecha_corte_inicio: str | None = None,
     sunat_fecha_corte_fin: str | None = None,
+    refresh_duckdb: bool | None = None,
 ) -> None:
     settings = get_settings()
 
@@ -593,6 +653,16 @@ def agro_ingesta_flow(
             for future in concurrent.futures.as_completed(futures):
                 future.result()
 
+    should_refresh_duckdb = settings.prefect_enable_duckdb_refresh and (
+        refresh_duckdb
+        if refresh_duckdb is not None
+        else settings.prefect_duckdb_refresh_after_ingesta
+    )
+    if should_refresh_duckdb:
+        duckdb_refresh_flow.with_options(
+            timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes
+        )(force_rebuild=True)
+
 
 def _main() -> None:
     settings = get_settings()
@@ -613,6 +683,8 @@ def _main() -> None:
         sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)()
     elif mode == "midagri-ce":
         midagri_ce_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_ce_timeout_minutes)()
+    elif mode == "duckdb-refresh":
+        duckdb_refresh_flow.with_options(timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes)()
     else:
         agro_ingesta_flow()
 
