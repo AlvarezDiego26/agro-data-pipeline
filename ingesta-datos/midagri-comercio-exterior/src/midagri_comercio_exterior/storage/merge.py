@@ -6,7 +6,8 @@ DATASET_BUSINESS_KEYS = {
     "fuentes_remotas_midagri": ["archivo_firma_remota"],
     "base_comercio_exterior": ["registro_hash_fuente"],
     "catalogo_cuadros_comercio_exterior": ["registro_hash_fuente"],
-    "comercio_exterior_agrario": ["registro_hash_fuente"],
+    "comercio_exportacion_agrario": ["registro_hash_fuente"],
+    "comercio_importacion_agrario": ["registro_hash_fuente"],
 }
 
 

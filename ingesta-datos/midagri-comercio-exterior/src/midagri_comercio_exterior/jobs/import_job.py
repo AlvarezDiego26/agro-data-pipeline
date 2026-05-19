@@ -26,9 +26,10 @@ from midagri_comercio_exterior.storage.control import (
 from midagri_comercio_exterior.storage.delta import save_delta_table
 from midagri_comercio_exterior.storage.merge import deduplicate_dataset, normalize_dataset
 from midagri_comercio_exterior.transformers.analytics import (
-    ANALYTICS_DATASET,
+    EXPORTACION_DATASET,
+    IMPORTACION_DATASET,
     INVENTORY_DATASET,
-    build_analytics_dataset,
+    build_analytics_datasets,
     build_sheet_inventory,
 )
 
@@ -377,18 +378,33 @@ def _persist_inventory_dataset(df: pl.DataFrame, *, overwrite: bool = False) -> 
     )
 
 
-def _persist_analytics_dataset(df: pl.DataFrame, *, overwrite: bool = False) -> str:
-    analytics_df = build_analytics_dataset(df)
-    if analytics_df.is_empty():
-        return ""
-    analytics_df = normalize_dataset(analytics_df, ANALYTICS_DATASET)
-    analytics_df = deduplicate_dataset(analytics_df, ANALYTICS_DATASET)
-    analytics_df = analytics_df.with_columns(
-        pl.col("fecha_particion").cast(pl.Date, strict=False),
-        pl.col("fecha_referencia_inicio").cast(pl.Date, strict=False),
-        pl.col("fecha_referencia_fin").cast(pl.Date, strict=False),
-    )
-    return save_delta_table(analytics_df, ANALYTICS_DATASET, ["fecha_particion"], overwrite=overwrite)
+def _persist_analytics_datasets(df: pl.DataFrame, *, overwrite: bool = False) -> list[str]:
+    export_df, import_df = build_analytics_datasets(df)
+    dataset_names: list[str] = []
+
+    if not export_df.is_empty():
+        export_df = normalize_dataset(export_df, EXPORTACION_DATASET)
+        export_df = deduplicate_dataset(export_df, EXPORTACION_DATASET)
+        export_df = export_df.with_columns(
+            pl.col("fecha_particion").cast(pl.Date, strict=False),
+            pl.col("fecha_referencia_inicio").cast(pl.Date, strict=False),
+            pl.col("fecha_referencia_fin").cast(pl.Date, strict=False),
+        )
+        save_delta_table(export_df, EXPORTACION_DATASET, ["fecha_particion"], overwrite=overwrite)
+        dataset_names.append(EXPORTACION_DATASET)
+
+    if not import_df.is_empty():
+        import_df = normalize_dataset(import_df, IMPORTACION_DATASET)
+        import_df = deduplicate_dataset(import_df, IMPORTACION_DATASET)
+        import_df = import_df.with_columns(
+            pl.col("fecha_particion").cast(pl.Date, strict=False),
+            pl.col("fecha_referencia_inicio").cast(pl.Date, strict=False),
+            pl.col("fecha_referencia_fin").cast(pl.Date, strict=False),
+        )
+        save_delta_table(import_df, IMPORTACION_DATASET, ["fecha_particion"], overwrite=overwrite)
+        dataset_names.append(IMPORTACION_DATASET)
+
+    return dataset_names
 
 
 def _persist_source_dataset(frames: list[pl.DataFrame], *, overwrite: bool = False) -> list[str]:
@@ -402,9 +418,8 @@ def _persist_source_dataset(frames: list[pl.DataFrame], *, overwrite: bool = Fal
     inventory_path = _persist_inventory_dataset(merged_source_df, overwrite=overwrite)
     if inventory_path:
         dataset_names.append(INVENTORY_DATASET)
-    analytics_path = _persist_analytics_dataset(merged_source_df, overwrite=overwrite)
-    if analytics_path:
-        dataset_names.append(ANALYTICS_DATASET)
+    analytics_paths = _persist_analytics_datasets(merged_source_df, overwrite=overwrite)
+    dataset_names.extend(analytics_paths)
     return dataset_names
 
 

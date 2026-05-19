@@ -11,9 +11,10 @@ import polars as pl
 
 
 INVENTORY_DATASET = "catalogo_cuadros_comercio_exterior"
-ANALYTICS_DATASET = "comercio_exterior_agrario"
+EXPORTACION_DATASET = "comercio_exportacion_agrario"
+IMPORTACION_DATASET = "comercio_importacion_agrario"
 
-ANALYTICS_SCHEMA: dict[str, pl.DataType] = {
+EXPORTACION_SCHEMA: dict[str, pl.DataType] = {
     "archivo_origen": pl.Utf8,
     "archivo_miembro": pl.Utf8,
     "tipo_archivo_origen": pl.Utf8,
@@ -23,7 +24,6 @@ ANALYTICS_SCHEMA: dict[str, pl.DataType] = {
     "hoja_nombre": pl.Utf8,
     "hoja_titulo": pl.Utf8,
     "tipo_hoja": pl.Utf8,
-    "flujo": pl.Utf8,
     "frecuencia": pl.Utf8,
     "periodo_texto_fuente": pl.Utf8,
     "fecha_referencia_inicio": pl.Date,
@@ -41,8 +41,42 @@ ANALYTICS_SCHEMA: dict[str, pl.DataType] = {
     "capitulo": pl.Utf8,
     "peso_neto_t": pl.Float64,
     "valor_fob_miles_usd": pl.Float64,
-    "valor_cif_miles_usd": pl.Float64,
     "precio_fob_usd_t": pl.Float64,
+    "participacion_pct": pl.Float64,
+    "participacion_acumulada_pct": pl.Float64,
+    "unidad_medida": pl.Utf8,
+    "cantidad": pl.Float64,
+    "es_total": pl.Boolean,
+    "registro_hash_fuente": pl.Utf8,
+}
+
+IMPORTACION_SCHEMA: dict[str, pl.DataType] = {
+    "archivo_origen": pl.Utf8,
+    "archivo_miembro": pl.Utf8,
+    "tipo_archivo_origen": pl.Utf8,
+    "archivo_anio_publicacion": pl.Int32,
+    "archivo_fecha_descarga": pl.Utf8,
+    "anio_publicacion": pl.Int32,
+    "hoja_nombre": pl.Utf8,
+    "hoja_titulo": pl.Utf8,
+    "tipo_hoja": pl.Utf8,
+    "frecuencia": pl.Utf8,
+    "periodo_texto_fuente": pl.Utf8,
+    "fecha_referencia_inicio": pl.Date,
+    "fecha_referencia_fin": pl.Date,
+    "fecha_particion": pl.Date,
+    "anio": pl.Int32,
+    "mes": pl.Int32,
+    "mes_nombre": pl.Utf8,
+    "nivel_agregacion": pl.Utf8,
+    "ranking": pl.Int32,
+    "subpartida_nacional": pl.Utf8,
+    "descripcion": pl.Utf8,
+    "pais": pl.Utf8,
+    "aduana": pl.Utf8,
+    "capitulo": pl.Utf8,
+    "peso_neto_t": pl.Float64,
+    "valor_cif_miles_usd": pl.Float64,
     "precio_cif_usd_t": pl.Float64,
     "participacion_pct": pl.Float64,
     "participacion_acumulada_pct": pl.Float64,
@@ -486,9 +520,9 @@ def _build_monthly_capitulo_rows(matrix: list[list[str]], metadata: dict[str, ob
     return results
 
 
-def build_analytics_dataset(base_df: pl.DataFrame) -> pl.DataFrame:
+def build_analytics_datasets(base_df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     if base_df.is_empty():
-        return pl.DataFrame()
+        return pl.DataFrame(schema=EXPORTACION_SCHEMA), pl.DataFrame(schema=IMPORTACION_SCHEMA)
 
     records: list[dict[str, object]] = []
     group_cols = [
@@ -533,5 +567,13 @@ def build_analytics_dataset(base_df: pl.DataFrame) -> pl.DataFrame:
             records.extend(_build_monthly_capitulo_rows(matrix, metadata, "valor_cif"))
 
     if not records:
-        return pl.DataFrame()
-    return pl.from_dicts(records, schema=ANALYTICS_SCHEMA)
+        return pl.DataFrame(schema=EXPORTACION_SCHEMA), pl.DataFrame(schema=IMPORTACION_SCHEMA)
+
+    # Creamos un DataFrame general temporal con la unión de campos y el flujo para filtrar
+    temp_schema = {**EXPORTACION_SCHEMA, **IMPORTACION_SCHEMA, "flujo": pl.Utf8}
+    general_df = pl.from_dicts(records, schema=temp_schema)
+
+    export_df = general_df.filter(pl.col("flujo") == "exportacion").select(list(EXPORTACION_SCHEMA.keys()))
+    import_df = general_df.filter(pl.col("flujo") == "importacion").select(list(IMPORTACION_SCHEMA.keys()))
+
+    return export_df, import_df

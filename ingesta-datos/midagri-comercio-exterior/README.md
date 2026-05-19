@@ -10,7 +10,7 @@ Por defecto el pipeline prioriza salidas utiles para analisis y deja apagadas la
 2. `download`: descarga solo versiones remotas nuevas.
 3. `import`: procesa el archivo si su hash no fue importado antes.
 4. `catalogo_cuadros_comercio_exterior`: resume las hojas detectadas y su clasificacion.
-5. `comercio_exterior_agrario`: capa analitica normalizada.
+5. `comercio_exportacion_agrario` y `comercio_importacion_agrario`: capas analíticas normalizadas e independientes.
 6. Capas tecnicas opcionales:
    - `fuentes_remotas_midagri`
    - `archivos_fuente_midagri`
@@ -18,7 +18,8 @@ Por defecto el pipeline prioriza salidas utiles para analisis y deja apagadas la
 
 ## Salidas
 
-- `comercio_exterior_agrario`
+- `comercio_exportacion_agrario`
+- `comercio_importacion_agrario`
 - `catalogo_cuadros_comercio_exterior`
 - `control_state.parquet`
 - `control_events_local.parquet`
