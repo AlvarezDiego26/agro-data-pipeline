@@ -259,6 +259,7 @@ def _deploy_managed(settings) -> None:
             "fecha_corte_inicio": settings.midagri_ce_fecha_corte_inicio,
             "fecha_corte_fin": settings.midagri_ce_fecha_corte_fin or None,
             "modo_carga": settings.midagri_ce_modo_carga,
+            "rebuild_clean": False,
         },
         job_variables={
             "pip_packages": settings.prefect_requirements,
@@ -443,6 +444,7 @@ def _deploy_process(settings) -> None:
             "fecha_corte_inicio": settings.midagri_ce_fecha_corte_inicio,
             "fecha_corte_fin": settings.midagri_ce_fecha_corte_fin or None,
             "modo_carga": settings.midagri_ce_modo_carga,
+            "rebuild_clean": False,
         },
         job_variables=midagri_job_variables,
         tags=["midagri-ce", "local", "process", "ingesta"],

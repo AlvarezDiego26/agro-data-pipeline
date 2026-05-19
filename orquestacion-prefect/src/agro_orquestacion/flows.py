@@ -141,6 +141,7 @@ def run_midagri_ce_task(
     fecha_corte_inicio: str | None = None,
     fecha_corte_fin: str | None = None,
     modo_carga: str | None = None,
+    rebuild_clean: bool = False,
 ) -> None:
     settings = get_settings()
     python_executable = ensure_runtime_python(
@@ -157,9 +158,10 @@ def run_midagri_ce_task(
             "MIDAGRI_CE_MODO_CARGA": modo_carga,
         },
     )
+    arguments = ["rebuild-clean"] if rebuild_clean else ["run-main"]
     run_python_module(
         "midagri_comercio_exterior.cli",
-        arguments=["run-main"],
+        arguments=arguments,
         working_dir=settings.midagri_ce_root,
         environment=environment,
         python_executable=python_executable,
@@ -224,16 +226,18 @@ def publish_serving_task() -> None:
 
     snapshot_path = settings.duckdb_snapshot_database_path
     host_root = settings.agro_analitica_host_path
-    env_path = settings.agro_analitica_host_api_env_path
+    container_env_path = settings.agro_analitica_container_api_env_path
+    host_env_path = settings.agro_analitica_host_api_env_path
 
     if not snapshot_path.exists() or snapshot_path.stat().st_size <= 0:
         raise RuntimeError(
             f"No existe un snapshot valido para publicar en serving: {snapshot_path}."
         )
 
-    if not env_path.exists():
+    if not container_env_path.exists():
         raise RuntimeError(
-            f"No existe el archivo .env requerido para publicar serving: {env_path}."
+            "No existe el archivo .env requerido para publicar serving dentro del worker: "
+            f"{container_env_path}."
         )
 
     logger.info("[Serving] Publicando snapshot %s a PostgreSQL/Supabase", snapshot_path.name)
@@ -243,7 +247,7 @@ def publish_serving_task() -> None:
             "run",
             "--rm",
             "--env-file",
-            str(env_path),
+            str(host_env_path),
             "-v",
             f"{host_root}:/workspace/agro-analitica",
             "-w",
@@ -676,11 +680,13 @@ def midagri_ce_main_flow(
     fecha_corte_inicio: str | None = None,
     fecha_corte_fin: str | None = None,
     modo_carga: str | None = None,
+    rebuild_clean: bool = False,
 ) -> None:
     run_midagri_ce_task(
         fecha_corte_inicio=fecha_corte_inicio,
         fecha_corte_fin=fecha_corte_fin,
         modo_carga=modo_carga,
+        rebuild_clean=rebuild_clean,
     )
 
 

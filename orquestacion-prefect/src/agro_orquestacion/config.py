@@ -163,6 +163,10 @@ class Settings(BaseSettings):
         return self.agro_analitica_host_path / "api" / ".env"
 
     @property
+    def agro_analitica_container_api_env_path(self) -> Path:
+        return self.agro_analitica_api_root / ".env"
+
+    @property
     def duckdb_build_database_path(self) -> Path:
         return self.duckdb_data_path / self.duckdb_build_database_name
 
