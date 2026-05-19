@@ -14,6 +14,9 @@ dependencies = [
   "python-dotenv==1.1.0",
 ]
 
+[project.scripts]
+agro-orquestacion-deploy = "agro_orquestacion.deploy:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

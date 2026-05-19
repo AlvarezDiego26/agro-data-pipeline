@@ -107,7 +107,7 @@ Con el enfoque de token:
 - `PREFECT_GITHUB_ACCESS_TOKEN` debe tener permiso de lectura al repositorio
 - `PREFECT_GITHUB_SECRET_BLOCK_NAME` define el nombre del bloque `Secret` que `deploy.py` crea o actualiza automaticamente en `Prefect`
 
-El helper `python -m agro_orquestacion.deploy` no publica deployments managed si:
+El helper `python -m agro_orquestacion.deploy` o `agro-orquestacion-deploy` no publica deployments managed si:
 - `MINIO_ACCESS_KEY` esta vacio
 - `MINIO_SECRET_KEY` esta vacio
 
@@ -201,6 +201,12 @@ Con la sesion de `Prefect Cloud` ya autenticada:
 python -m agro_orquestacion.deploy
 ```
 
+Alternativa equivalente si el paquete ya esta instalado:
+
+```powershell
+agro-orquestacion-deploy
+```
+
 ### Modo `managed`
 Si `PREFECT_EXECUTION_MODE=managed`, publica:
 - `sisap-volumen-managed`
@@ -243,6 +249,19 @@ prefect worker start --pool "agro-process-pool" --type process --limit 4
 ```
 
 Con esto, los runs de `sisap-volumen-local`, `sisap-precios-local`, `sisap-regiones-local`, `sunat-local` y `duckdb-refresh-local` ya generan logs reales del Python que se ejecuta en tu maquina.
+
+### Publicar Deployments Dentro Del Worker Docker
+Si quieres reaplicar deployments desde `prefect-worker`, usa uno de estos comandos:
+
+```powershell
+docker compose exec prefect-worker sh -lc "cd /app/orquestacion-prefect && python -m agro_orquestacion.deploy"
+```
+
+```powershell
+docker compose exec prefect-worker agro-orquestacion-deploy
+```
+
+La segunda opcion es la mas estable porque usa el comando instalado por `pip install -e .` y no depende del directorio actual.
 
 ## Estrategia Recomendada Para DuckDB
 - dejar que la ingesta siga escribiendo Delta en `MinIO`
