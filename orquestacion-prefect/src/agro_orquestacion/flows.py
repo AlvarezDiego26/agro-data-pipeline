@@ -227,7 +227,6 @@ def publish_serving_task() -> None:
     snapshot_path = settings.duckdb_snapshot_database_path
     host_root = settings.agro_analitica_host_path
     container_env_path = settings.agro_analitica_container_api_env_path
-    host_env_path = settings.agro_analitica_host_api_env_path
 
     if not snapshot_path.exists() or snapshot_path.stat().st_size <= 0:
         raise RuntimeError(
@@ -247,7 +246,7 @@ def publish_serving_task() -> None:
             "run",
             "--rm",
             "--env-file",
-            str(host_env_path),
+            str(container_env_path),
             "-v",
             f"{host_root}:/workspace/agro-analitica",
             "-w",
