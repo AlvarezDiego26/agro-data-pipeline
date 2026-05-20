@@ -24,29 +24,18 @@ class Settings(BaseSettings):
     prefect_enable_sunat: bool = True
     prefect_enable_midagri_ce: bool = True
     prefect_enable_midagri_boletines: bool = True
-    prefect_enable_duckdb_refresh: bool = True
-    prefect_enable_duckdb_refresh_schedule: bool = False
-    prefect_enable_serving_sync: bool = True
-    prefect_enable_serving_sync_schedule: bool = False
-    prefect_duckdb_refresh_after_ingesta: bool = True
     prefect_sisap_timeout_minutes: int = 240
     prefect_sunat_timeout_minutes: int = 180
     prefect_midagri_ce_interval_hours: int = 24
     prefect_midagri_ce_timeout_minutes: int = 120
     prefect_midagri_boletines_interval_hours: int = 12
     prefect_midagri_boletines_timeout_minutes: int = 120
-    prefect_duckdb_refresh_interval_hours: int = 6
-    prefect_duckdb_refresh_timeout_minutes: int = 90
-    prefect_serving_sync_interval_hours: int = 12
-    prefect_serving_sync_timeout_minutes: int = 120
     prefect_worker_process_limit: int = 1
     prefect_max_parallel_pipelines: int = 1
     prefect_sisap_deployment_concurrency_limit: int = 1
     prefect_sunat_deployment_concurrency_limit: int = 1
     prefect_midagri_ce_deployment_concurrency_limit: int = 1
     prefect_midagri_boletines_deployment_concurrency_limit: int = 1
-    prefect_duckdb_deployment_concurrency_limit: int = 1
-    prefect_serving_sync_deployment_concurrency_limit: int = 1
     prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
     prefect_repo_branch: str = "main"
     prefect_github_access_token: str = ""
@@ -55,14 +44,6 @@ class Settings(BaseSettings):
 
     storage_backend: str = "minio"
     delta_enabled: bool = True
-    duckdb_container_name: str = "duckdb-agro"
-    duckdb_runtime_root: str = ""
-    agro_analitica_host_root: str = ""
-    duckdb_build_database_name: str = "agro_build.duckdb"
-    duckdb_snapshot_database_name: str = "agro_api_snapshot.duckdb"
-    duckdb_build_init_sql_path: str = "/sql/51-build-api-cache-fast.sql"
-    serving_publish_node_image: str = "node:20-bookworm"
-    duckdb_minio_endpoint: str = ""
     minio_endpoint: str = "http://minio-api:9000"
     minio_access_key: str = ""
     minio_secret_key: str = ""
@@ -143,52 +124,6 @@ class Settings(BaseSettings):
     @property
     def runtime_venvs_root(self) -> Path:
         return self.repo_root / ".runtime-venvs"
-
-    @property
-    def agro_analitica_root(self) -> Path:
-        if self.duckdb_runtime_root:
-            return Path(self.duckdb_runtime_root).resolve().parents[2]
-        return self.repo_root.parent / "agro-analitica"
-
-    @property
-    def agro_analitica_host_path(self) -> Path:
-        if self.agro_analitica_host_root:
-            return Path(self.agro_analitica_host_root).resolve()
-        return self.agro_analitica_root
-
-    @property
-    def duckdb_runtime_path(self) -> Path:
-        if self.duckdb_runtime_root:
-            return Path(self.duckdb_runtime_root).resolve()
-        return self.agro_analitica_root / "db" / "duckdb" / "runtime"
-
-    @property
-    def duckdb_data_path(self) -> Path:
-        return self.duckdb_runtime_path / "data"
-
-    @property
-    def agro_analitica_api_root(self) -> Path:
-        return self.agro_analitica_root / "api"
-
-    @property
-    def agro_analitica_api_env_path(self) -> Path:
-        return self.agro_analitica_api_root / ".env"
-
-    @property
-    def agro_analitica_host_api_env_path(self) -> Path:
-        return self.agro_analitica_host_path / "api" / ".env"
-
-    @property
-    def agro_analitica_container_api_env_path(self) -> Path:
-        return self.agro_analitica_api_root / ".env"
-
-    @property
-    def duckdb_build_database_path(self) -> Path:
-        return self.duckdb_data_path / self.duckdb_build_database_name
-
-    @property
-    def duckdb_snapshot_database_path(self) -> Path:
-        return self.duckdb_data_path / self.duckdb_snapshot_database_name
 
     @property
     def sisap_requirements_path(self) -> Path:
@@ -303,21 +238,6 @@ class Settings(BaseSettings):
             "MIDAGRI_BOLETINES_FECHA_FIN": self.midagri_boletines_fecha_fin,
             "MIDAGRI_BOLETINES_MODO_CARGA": self.midagri_boletines_modo_carga,
         }
-
-    def duckdb_env(self) -> dict[str, str]:
-        return {
-            "PYTHONPATH": "src",
-            "DUCKDB_CONTAINER_NAME": self.duckdb_container_name,
-            "DUCKDB_RUNTIME_ROOT": str(self.duckdb_runtime_path),
-            "DUCKDB_BUILD_DATABASE_NAME": self.duckdb_build_database_name,
-            "DUCKDB_SNAPSHOT_DATABASE_NAME": self.duckdb_snapshot_database_name,
-            "DUCKDB_BUILD_INIT_SQL_PATH": self.duckdb_build_init_sql_path,
-            "DUCKDB_MINIO_ENDPOINT": self.duckdb_minio_endpoint or self.minio_endpoint,
-            "MINIO_ACCESS_KEY": self.minio_access_key,
-            "MINIO_SECRET_KEY": self.minio_secret_key,
-            "MINIO_REGION": self.minio_region,
-        }
-
 
 def get_settings() -> Settings:
     return Settings()

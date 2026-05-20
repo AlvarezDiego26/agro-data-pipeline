@@ -173,7 +173,11 @@ def run_sample() -> Path:
 
     extractor = SisapMayoristaExtractor()
     query, report_html, _ = _find_first_non_empty_report(extractor, plan)
-    save_html_snapshot(ModuloSisap.MAYORISTA_VOLUMEN, query, report_html)
+    save_html_snapshot(
+        ModuloSisap.MAYORISTA_VOLUMEN,
+        query,
+        report_html,
+    )
     df = _normalize_report(query, report_html)
     validate_non_empty(df, 'volumen')
     validate_expected_columns(df, EXPECTED_COLUMNS, 'volumen')
@@ -237,13 +241,13 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                         sig = quick_html_data_signals(report_html)
                         logger.warning(
                             'Sin resultados de volumen para mercado={} producto={} codigo={} rango={}..{} '
-                            '| HTML bruto en {} | senales={}',
+                            '| debug_html={} | senales={}',
                             query.mercado_codigo,
                             query.producto_nombre,
                             query.producto_codigo,
                             query.fecha_inicio,
                             query.fecha_fin,
-                            snap_path.resolve(),
+                            settings.sisap_save_debug_html,
                             sig,
                         )
                         if rows and _table_has_materialized_values(rows):

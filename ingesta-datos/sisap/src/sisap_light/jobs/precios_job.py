@@ -104,7 +104,11 @@ def _fetch_price_frames(extractor: SisapMayoristaExtractor, query: SisapQuery, s
 
 def _find_first_non_empty_report(extractor: SisapMayoristaExtractor, plan: list[SisapQuery]) -> tuple[SisapQuery, pl.DataFrame, dict[str, list[str]]]:
     for query in plan[:MAX_SAMPLE_QUERIES]:
-        df, titles, _ = _fetch_price_frames(extractor, query, save_raw=True)
+        df, titles, _ = _fetch_price_frames(
+            extractor,
+            query,
+            save_raw=get_settings().sisap_save_debug_html,
+        )
         if not df.is_empty():
             return query, df, titles
     raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
@@ -189,16 +193,20 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 )
                 register_control_query(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
                 try:
-                    df, _, sample_html = _fetch_price_frames(extractor, query, save_raw=True)
+                    df, _, sample_html = _fetch_price_frames(
+                        extractor,
+                        query,
+                        save_raw=settings.sisap_save_debug_html,
+                    )
                     if df.is_empty():
                         sig = quick_html_data_signals(sample_html)
                         logger.warning(
                             'Sin resultados de precios para mercado={} producto={} codigo={} | '
-                            'HTML por metrica en data/raw/html/{} (sufijos precio_min|prom|max) | senales_ultima_respuesta={}',
+                            'debug_html={} | senales_ultima_respuesta={}',
                             query.mercado_codigo,
                             query.producto_nombre,
                             query.producto_codigo,
-                            ModuloSisap.MAYORISTA_PRECIOS.value,
+                            settings.sisap_save_debug_html,
                             sig,
                         )
                         if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     sisap_scope_max_workers: int = 2
     sisap_shard_max_workers: int = 4
     sisap_product_batch_size: int = 1
+    sisap_save_debug_html: bool = False
 
     storage_backend: str = 'local'
     delta_enabled: bool = True
@@ -234,8 +235,9 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.raw_dir.mkdir(parents=True, exist_ok=True)
     settings.clean_dir.mkdir(parents=True, exist_ok=True)
-    settings.raw_html_dir.mkdir(parents=True, exist_ok=True)
     settings.control_dir.mkdir(parents=True, exist_ok=True)
+    if settings.sisap_save_debug_html:
+        settings.raw_html_dir.mkdir(parents=True, exist_ok=True)
     if not settings.is_minio:
         settings.clean_delta_dir.mkdir(parents=True, exist_ok=True)
     return settings

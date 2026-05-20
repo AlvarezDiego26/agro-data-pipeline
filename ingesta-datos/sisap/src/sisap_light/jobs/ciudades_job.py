@@ -65,6 +65,14 @@ EXPECTED_COLUMNS_MIN = [
     'precio_max',
 ]
 MAX_SAMPLE_QUERIES = 12
+CONTROL_FLUSH_EVERY = 20
+
+
+def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
+    if event_rows:
+        persist_control_events_batch(event_rows)
+        event_rows.clear()
+    persist_control_states(control_states)
 
 
 def _resolve_region(region_nombre: str | None = None) -> dict:
@@ -210,7 +218,12 @@ def _fetch_city_frames(
 
 def _find_first_non_empty_report(extractor: SisapCiudadesExtractor, plan: list[SisapQuery], modulo: ModuloSisap) -> tuple[SisapQuery, pl.DataFrame]:
     for query in plan[:MAX_SAMPLE_QUERIES]:
-        df, _ = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
+        df, _ = _fetch_city_frames(
+            extractor,
+            query,
+            modulo=modulo,
+            save_raw=get_settings().sisap_save_debug_html,
+        )
         if not df.is_empty():
             return query, df
     raise ValueError('No se encontraron resultados con datos en las primeras consultas de muestra.')
@@ -256,6 +269,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         extractor = SisapCiudadesExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
+        pending_event_rows: list[dict[str, object]] = []
         accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
         try:
             for idx, query in enumerate(shard.items, start=1):
@@ -270,17 +284,22 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                 )
                 register_control_query(control_states, output_name, output_name, 'region', region['nombre'], query)
                 try:
-                    df, sample_html = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
+                    df, sample_html = _fetch_city_frames(
+                        extractor,
+                        query,
+                        modulo=modulo,
+                        save_raw=settings.sisap_save_debug_html,
+                    )
                     if df.is_empty():
                         sig = quick_html_data_signals(sample_html)
                         logger.warning(
                             'Sin resultados de {} para region={} producto={} codigo={} | '
-                            'HTML en data/raw/html/precio_diario_regiones (sufijos {}) | senales_ultima_respuesta={}',
+                            'debug_html={} | senales_ultima_respuesta={}',
                             output_name,
                             region['nombre'],
                             query.producto_nombre,
                             query.producto_codigo,
-                            '|'.join(_variables(modulo)),
+                            settings.sisap_save_debug_html,
                             sig,
                         )
                         if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
@@ -306,8 +325,9 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                             'empty',
                             'sin_resultados',
                         )
-                        persist_control_events_batch([event_row])
-                        persist_control_states(control_states)
+                        pending_event_rows.append(event_row)
+                        if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                            _flush_control_batch(control_states, pending_event_rows)
                         shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
                         continue
                     validate_expected_columns(df, _expected_columns(modulo), f'{output_name}_{query.producto_codigo}')
@@ -321,8 +341,9 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                         query,
                         'success',
                     )
-                    persist_control_events_batch([event_row])
-                    persist_control_states(control_states)
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
                 except Exception as exc:
                     logger.exception('Fallo extrayendo {} para {} ({})', output_name, query.producto_nombre, query.producto_codigo)
                     register_control_failure(control_states, output_name, output_name, 'region', region['nombre'], query, str(exc))
@@ -335,8 +356,9 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                         'error',
                         str(exc),
                     )
-                    persist_control_events_batch([event_row])
-                    persist_control_states(control_states)
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
                     shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
             # Guardar todos los dataframes acumulados del shard en un solo lote
             for (sl, sv), frames_list in accumulated_frames.items():
@@ -349,6 +371,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                         scope_label=sl,
                         scope_value=sv,
                     )
+            _flush_control_batch(control_states, pending_event_rows)
         finally:
             extractor.close()
             accumulated_frames.clear()

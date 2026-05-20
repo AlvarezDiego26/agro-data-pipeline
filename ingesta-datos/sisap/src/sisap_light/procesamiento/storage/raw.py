@@ -10,8 +10,15 @@ def build_query_hash(query: SisapQuery) -> str:
     return md5(payload).hexdigest()
 
 
-def save_html_snapshot(modulo: ModuloSisap, query: SisapQuery, html: str, suffix: str | None = None) -> Path:
+def save_html_snapshot(
+    modulo: ModuloSisap,
+    query: SisapQuery,
+    html: str,
+    suffix: str | None = None,
+) -> Path | None:
     settings = get_settings()
+    if not settings.sisap_save_debug_html:
+        return None
     folder = settings.raw_html_dir / modulo.value
     folder.mkdir(parents=True, exist_ok=True)
     query_hash = build_query_hash(query)
