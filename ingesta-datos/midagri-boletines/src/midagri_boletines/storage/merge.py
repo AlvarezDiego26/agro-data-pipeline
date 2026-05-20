@@ -6,8 +6,10 @@ from deltalake.writer import write_deltalake
 from midagri_boletines.config import get_settings
 
 DATASET_BUSINESS_KEYS: dict[str, list[str]] = {
-    "base_gmml_diario": ["registro_hash_fuente"],
-    "base_agro_en_cifras": ["registro_hash_fuente"]
+    "base/base_gmml_diario": ["registro_hash_fuente"],
+    "base/base_agro_en_cifras": ["registro_hash_fuente"],
+    "curated/gmml_diario_agrario": ["registro_hash_fuente"],
+    "curated/agro_en_cifras_agrario": ["registro_hash_fuente"],
 }
 
 

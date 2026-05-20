@@ -152,3 +152,129 @@ def process_monthly_file_bytes(
     else:
         logger.warning(f"Formato de archivo no soportado para transformación: {file_name}")
         return pl.DataFrame()
+MONTH_NAME_TO_NUMBER = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+
+
+def _classify_member_name(member_name: str | None, source_name: str) -> tuple[str, str]:
+    candidate = f"{member_name or ''} {source_name}".lower()
+    patterns = [
+        ("agricola", "produccion_agricola"),
+        ("pecuario", "produccion_pecuaria_avicola"),
+        ("avicola", "produccion_pecuaria_avicola"),
+        ("agroindustria", "agroindustria"),
+        ("comercio interno", "comercio_interno"),
+        ("comercio- interno", "comercio_interno"),
+        ("comercio externo", "comercio_exterior"),
+        ("comercio- externo", "comercio_exterior"),
+        ("insumos y servicios", "insumos_y_servicios_agrarios"),
+        ("insumos-y-servicios", "insumos_y_servicios_agrarios"),
+    ]
+    for marker, category in patterns:
+        if marker in candidate:
+            return category, "agrario"
+    return "otros_agrarios", "agrario"
+
+
+def _extract_month_from_name(member_name: str | None, source_name: str) -> tuple[int | None, str | None]:
+    candidate = f"{member_name or ''} {source_name}".lower()
+    for month_name, month_number in MONTH_NAME_TO_NUMBER.items():
+        if month_name in candidate:
+            return month_number, month_name
+    return None, None
+
+
+def build_monthly_agrarian_curated(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return pl.DataFrame(
+            schema={
+                "categoria_agraria": pl.Utf8,
+                "dominio_fuente": pl.Utf8,
+                "mes_publicacion": pl.Int64,
+                "mes_publicacion_nombre": pl.Utf8,
+                "es_hoja_indice": pl.Boolean,
+                "hoja_nombre": pl.Utf8,
+                "fila_idx": pl.Int64,
+                "columna_idx": pl.Int64,
+                "columna_nombre": pl.Utf8,
+                "celda_valor": pl.Utf8,
+                "archivo_origen": pl.Utf8,
+                "archivo_miembro": pl.Utf8,
+                "tipo_archivo_origen": pl.Utf8,
+                "archivo_anio_publicacion": pl.Int32,
+                "archivo_fecha_descarga": pl.Utf8,
+                "anio_publicacion": pl.Utf8,
+                "archivo_hash": pl.Utf8,
+                "archivo_tamano_bytes": pl.Int64,
+                "archivo_firma_remota": pl.Utf8,
+                "ruta_raw_origen": pl.Utf8,
+                "registro_hash_fuente": pl.Utf8,
+            }
+        )
+
+    metadata = (
+        df.select(["archivo_miembro", "archivo_origen"])
+        .to_struct("archivo_meta")
+        .map_elements(
+            lambda row: (
+                *_classify_member_name(row["archivo_miembro"], row["archivo_origen"]),
+                *_extract_month_from_name(row["archivo_miembro"], row["archivo_origen"]),
+            ),
+            return_dtype=pl.Struct(
+                [
+                    pl.Field("categoria_agraria", pl.Utf8),
+                    pl.Field("dominio_fuente", pl.Utf8),
+                    pl.Field("mes_publicacion", pl.Int64),
+                    pl.Field("mes_publicacion_nombre", pl.Utf8),
+                ]
+            ),
+        )
+        .alias("curated_meta")
+    )
+
+    return (
+        df.with_columns(metadata)
+        .unnest("curated_meta")
+        .with_columns(
+            pl.col("hoja_nombre").str.to_uppercase().str.contains("INDICE").alias("es_hoja_indice")
+        )
+        .filter(pl.col("dominio_fuente") == "agrario")
+        .select(
+            [
+                "categoria_agraria",
+                "dominio_fuente",
+                "mes_publicacion",
+                "mes_publicacion_nombre",
+                "es_hoja_indice",
+                "hoja_nombre",
+                "fila_idx",
+                "columna_idx",
+                "columna_nombre",
+                "celda_valor",
+                "archivo_origen",
+                "archivo_miembro",
+                "tipo_archivo_origen",
+                "archivo_anio_publicacion",
+                "archivo_fecha_descarga",
+                "anio_publicacion",
+                "archivo_hash",
+                "archivo_tamano_bytes",
+                "archivo_firma_remota",
+                "ruta_raw_origen",
+                "registro_hash_fuente",
+            ]
+        )
+    )

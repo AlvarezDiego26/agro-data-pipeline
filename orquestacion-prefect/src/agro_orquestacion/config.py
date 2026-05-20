@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     midagri_boletines_fecha_inicio: str = "2016-01-01"
     midagri_boletines_fecha_fin: str = ""
     midagri_boletines_modo_carga: str = "incremental"
+    midagri_boletines_save_raw_binary: bool = True
+    midagri_boletines_save_base_dataset: bool = True
+    midagri_boletines_save_curated_dataset: bool = True
 
     sisap_fecha_inicio: str = "2016-01-01"
     sisap_fecha_fin: str = ""
@@ -237,6 +240,9 @@ class Settings(BaseSettings):
             "MIDAGRI_BOLETINES_FECHA_INICIO": self.midagri_boletines_fecha_inicio,
             "MIDAGRI_BOLETINES_FECHA_FIN": self.midagri_boletines_fecha_fin,
             "MIDAGRI_BOLETINES_MODO_CARGA": self.midagri_boletines_modo_carga,
+            "MIDAGRI_BOLETINES_SAVE_RAW_BINARY": str(self.midagri_boletines_save_raw_binary).lower(),
+            "MIDAGRI_BOLETINES_SAVE_BASE_DATASET": str(self.midagri_boletines_save_base_dataset).lower(),
+            "MIDAGRI_BOLETINES_SAVE_CURATED_DATASET": str(self.midagri_boletines_save_curated_dataset).lower(),
         }
 
 def get_settings() -> Settings:

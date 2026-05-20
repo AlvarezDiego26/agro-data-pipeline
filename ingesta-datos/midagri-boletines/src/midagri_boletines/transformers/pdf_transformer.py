@@ -89,8 +89,8 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
 
                                 if prod and proc and p_prom > 0:
                                     records.append({
-                                        "producto": prod.upper(),
-                                        "procedencia": proc.upper(),
+                                        "producto_raw": prod.upper(),
+                                        "unidad_medida_raw": proc.upper(),
                                         "precio_minimo": p_min,
                                         "precio_maximo": p_max,
                                         "precio_promedio": p_prom,
@@ -122,8 +122,8 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
                             # Filtro básico
                             if prod and proc and p_prom > 0:
                                 records.append({
-                                    "producto": prod.upper(),
-                                    "procedencia": proc.upper(),
+                                    "producto_raw": prod.upper(),
+                                    "unidad_medida_raw": proc.upper(),
                                     "precio_minimo": p_min,
                                     "precio_maximo": p_max,
                                     "precio_promedio": p_prom,
@@ -139,8 +139,8 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
         return pl.DataFrame(schema={
             "fecha": pl.Date,
             "mercado": pl.Utf8,
-            "producto": pl.Utf8,
-            "procedencia": pl.Utf8,
+            "producto_raw": pl.Utf8,
+            "unidad_medida_raw": pl.Utf8,
             "precio_minimo": pl.Float64,
             "precio_maximo": pl.Float64,
             "precio_promedio": pl.Float64,
@@ -159,10 +159,10 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
 
     # Generar Hash único para deduplicación robusta (registro_hash_fuente)
     df = df.with_columns(
-        pl.struct(["fecha", "mercado", "producto", "procedencia"])
+        pl.struct(["fecha", "mercado", "producto_raw", "unidad_medida_raw"])
         .map_batches(lambda s: s.map_elements(
             lambda x: hashlib.md5(
-                f"{x['fecha']}_{x['mercado']}_{x['producto']}_{x['procedencia']}".encode('utf-8')
+                f"{x['fecha']}_{x['mercado']}_{x['producto_raw']}_{x['unidad_medida_raw']}".encode('utf-8')
             ).hexdigest(),
             return_dtype=pl.Utf8
         ))
@@ -173,8 +173,8 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
     df = df.select([
         "fecha",
         "mercado",
-        "producto",
-        "procedencia",
+        "producto_raw",
+        "unidad_medida_raw",
         pl.col("precio_minimo").cast(pl.Float64),
         pl.col("precio_maximo").cast(pl.Float64),
         pl.col("precio_promedio").cast(pl.Float64),
@@ -184,3 +184,86 @@ def parse_daily_gmml_pdf(pdf_bytes: bytes, target_date: date) -> pl.DataFrame:
 
     logger.info(f"Parsea exitoso: {len(df)} registros de precios obtenidos para la fecha {target_date}.")
     return df
+
+
+_TRAILING_NUMERIC_PATTERN = re.compile(r"^[-+]?\d[\d,]*\.?\d*$")
+
+
+def _extract_trailing_numeric_quartet(producto_raw: str) -> tuple[str, float | None, float | None, float | None, float | None]:
+    tokens = producto_raw.split()
+    if len(tokens) < 5:
+        return producto_raw.strip(), None, None, None, None
+
+    tail = tokens[-4:]
+    if not all(_TRAILING_NUMERIC_PATTERN.match(token) for token in tail):
+        return producto_raw.strip(), None, None, None, None
+
+    def _to_float(token: str) -> float:
+        return float(token.replace(",", ""))
+
+    producto = " ".join(tokens[:-4]).strip(" :-")
+    return producto, _to_float(tail[0]), _to_float(tail[1]), _to_float(tail[2]), _to_float(tail[3])
+
+
+def normalize_daily_gmml_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return pl.DataFrame(
+            schema={
+                "fecha": pl.Date,
+                "mercado": pl.Utf8,
+                "producto": pl.Utf8,
+                "producto_raw": pl.Utf8,
+                "unidad_medida": pl.Utf8,
+                "abastecimiento_origen_1": pl.Float64,
+                "abastecimiento_origen_2": pl.Float64,
+                "abastecimiento_origen_3": pl.Float64,
+                "abastecimiento_total_reportado": pl.Float64,
+                "precio_minimo": pl.Float64,
+                "precio_maximo": pl.Float64,
+                "precio_promedio": pl.Float64,
+                "ingreso_t": pl.Float64,
+                "ruta_raw_origen": pl.Utf8,
+                "registro_hash_fuente": pl.Utf8,
+                "fecha_particion": pl.Date,
+            }
+        )
+
+    parsed = (
+        df.select(["producto_raw"])
+        .to_series()
+        .map_elements(
+            lambda value: _extract_trailing_numeric_quartet(value or ""),
+            return_dtype=pl.Struct(
+                [
+                    pl.Field("producto", pl.Utf8),
+                    pl.Field("abastecimiento_origen_1", pl.Float64),
+                    pl.Field("abastecimiento_origen_2", pl.Float64),
+                    pl.Field("abastecimiento_origen_3", pl.Float64),
+                    pl.Field("abastecimiento_total_reportado", pl.Float64),
+                ]
+            ),
+        )
+        .alias("producto_parseado")
+    )
+
+    normalized = df.with_columns(parsed).unnest("producto_parseado")
+    return normalized.select(
+        [
+            "fecha",
+            "mercado",
+            pl.col("producto").fill_null(pl.col("producto_raw")).alias("producto"),
+            "producto_raw",
+            pl.col("unidad_medida_raw").alias("unidad_medida"),
+            "abastecimiento_origen_1",
+            "abastecimiento_origen_2",
+            "abastecimiento_origen_3",
+            "abastecimiento_total_reportado",
+            "precio_minimo",
+            "precio_maximo",
+            "precio_promedio",
+            "ingreso_t",
+            "ruta_raw_origen",
+            "registro_hash_fuente",
+            pl.col("fecha").alias("fecha_particion"),
+        ]
+    )

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     midagri_boletines_timeout_seconds: int = 30
     midagri_boletines_retry_intentos: int = 3
     midagri_boletines_retry_espera_segundos: int = 5
+    midagri_boletines_save_raw_binary: bool = True
+    midagri_boletines_save_base_dataset: bool = True
+    midagri_boletines_save_curated_dataset: bool = True
 
     storage_backend: str = 'local'
     delta_enabled: bool = True
@@ -47,6 +50,14 @@ class Settings(BaseSettings):
     @property
     def clean_delta_dir(self) -> Path:
         return self.data_dir / 'Landing/midagri_boletines'
+
+    @property
+    def landing_dir(self) -> Path:
+        return self.data_dir / 'Landing'
+
+    @property
+    def midagri_boletines_landing_dir(self) -> Path:
+        return self.landing_dir / 'midagri_boletines'
 
     @property
     def is_minio(self) -> bool:
