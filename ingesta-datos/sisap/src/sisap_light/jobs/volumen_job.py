@@ -206,116 +206,127 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
+        import gc
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
         pending_event_rows: list[dict[str, object]] = []
-        for idx, query in enumerate(shard.items, start=1):
-            logger.info(
-                'Procesando volumen shard={} {}/{} mercado={} producto={} codigo={}',
-                shard.shard_id,
-                idx,
-                len(shard.items),
-                query.mercado_codigo,
-                query.producto_nombre,
-                query.producto_codigo,
-            )
-            sl, sv = _volumen_control_scope(query)
-            register_control_query(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
-            try:
-                report_html = extractor.fetch_report(query, variable='volumen')
-                snap_path = save_html_snapshot(
-                    ModuloSisap.MAYORISTA_VOLUMEN, query, report_html, suffix='fetched'
+        accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
+        try:
+            for idx, query in enumerate(shard.items, start=1):
+                logger.info(
+                    'Procesando volumen shard={} {}/{} mercado={} producto={} codigo={}',
+                    shard.shard_id,
+                    idx,
+                    len(shard.items),
+                    query.mercado_codigo,
+                    query.producto_nombre,
+                    query.producto_codigo,
                 )
-                rows = detect_primary_table(report_html)
-                df = _normalize_report(query, report_html, rows=rows)
+                sl, sv = _volumen_control_scope(query)
+                register_control_query(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
+                try:
+                    report_html = extractor.fetch_report(query, variable='volumen')
+                    snap_path = save_html_snapshot(
+                        ModuloSisap.MAYORISTA_VOLUMEN, query, report_html, suffix='fetched'
+                    )
+                    rows = detect_primary_table(report_html)
+                    df = _normalize_report(query, report_html, rows=rows)
 
-                if df.is_empty():
-                    sig = quick_html_data_signals(report_html)
-                    logger.warning(
-                        'Sin resultados de volumen para mercado={} producto={} codigo={} rango={}..{} '
-                        '| HTML bruto en {} | senales={}',
-                        query.mercado_codigo,
-                        query.producto_nombre,
-                        query.producto_codigo,
-                        query.fecha_inicio,
-                        query.fecha_fin,
-                        snap_path.resolve(),
-                        sig,
-                    )
-                    if rows and _table_has_materialized_values(rows):
+                    if df.is_empty():
+                        sig = quick_html_data_signals(report_html)
                         logger.warning(
-                            'El HTML trae celdas con valores, pero el dataframe quedo vacio; '
-                            'esto si apunta a parser/transformer (detect_primary_table / build_volumen_frame).'
+                            'Sin resultados de volumen para mercado={} producto={} codigo={} rango={}..{} '
+                            '| HTML bruto en {} | senales={}',
+                            query.mercado_codigo,
+                            query.producto_nombre,
+                            query.producto_codigo,
+                            query.fecha_inicio,
+                            query.fecha_fin,
+                            snap_path.resolve(),
+                            sig,
                         )
-                    register_control_success(
-                        control_states,
-                        'volumen',
-                        'volumen_diario_mercado_lima',
-                        sl,
-                        sv,
-                        query,
-                        estado='empty',
-                    )
+                        if rows and _table_has_materialized_values(rows):
+                            logger.warning(
+                                'El HTML trae celdas con valores, pero el dataframe quedo vacio; '
+                                'esto si apunta a parser/transformer (detect_primary_table / build_volumen_frame).'
+                            )
+                        register_control_success(
+                            control_states,
+                            'volumen',
+                            'volumen_diario_mercado_lima',
+                            sl,
+                            sv,
+                            query,
+                            estado='empty',
+                        )
+                        event_row = build_control_event_row(
+                            'volumen',
+                            'volumen_diario_mercado_lima',
+                            sl,
+                            sv,
+                            query,
+                            'empty',
+                            'sin_resultados',
+                        )
+                        pending_event_rows.append(event_row)
+                        if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                            _flush_control_batch(control_states, pending_event_rows)
+                        continue
+
+                    validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
+                    accumulated_frames.setdefault((sl, sv), []).append(df)
+                    register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
                     event_row = build_control_event_row(
                         'volumen',
                         'volumen_diario_mercado_lima',
                         sl,
                         sv,
                         query,
-                        'empty',
-                        'sin_resultados',
+                        'success',
                     )
                     pending_event_rows.append(event_row)
                     if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                         _flush_control_batch(control_states, pending_event_rows)
-                    continue
-
-                validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
-                append_partitioned_output(
-                    frames=[df],
-                    output_name='volumen_diario_mercado_lima',
-                    expected_columns=EXPECTED_COLUMNS,
-                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                    scope_label=sl,
-                    scope_value=sv,
-                )
-                register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
-                event_row = build_control_event_row(
-                    'volumen',
-                    'volumen_diario_mercado_lima',
-                    sl,
-                    sv,
-                    query,
-                    'success',
-                )
-                pending_event_rows.append(event_row)
-                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
-                    _flush_control_batch(control_states, pending_event_rows)
-            except Exception as exc:
-                logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query, str(exc))
-                event_row = build_control_event_row(
-                    'volumen',
-                    'volumen_diario_mercado_lima',
-                    sl,
-                    sv,
-                    query,
-                    'error',
-                    str(exc),
-                )
-                pending_event_rows.append(event_row)
-                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
-                    _flush_control_batch(control_states, pending_event_rows)
-                shard_errors.append(
-                    {
-                        'mercado_codigo': query.mercado_codigo or '',
-                        'producto_codigo': query.producto_codigo,
-                        'producto_nombre': query.producto_nombre,
-                        'motivo': str(exc),
-                    }
-                )
-        _flush_control_batch(control_states, pending_event_rows)
+                except Exception as exc:
+                    logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
+                    register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query, str(exc))
+                    event_row = build_control_event_row(
+                        'volumen',
+                        'volumen_diario_mercado_lima',
+                        sl,
+                        sv,
+                        query,
+                        'error',
+                        str(exc),
+                    )
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
+                    shard_errors.append(
+                        {
+                            'mercado_codigo': query.mercado_codigo or '',
+                            'producto_codigo': query.producto_codigo,
+                            'producto_nombre': query.producto_nombre,
+                            'motivo': str(exc),
+                        }
+                    )
+            # Guardar todos los dataframes acumulados en una sola llamada de lote por cada grupo (sl, sv)
+            for (sl, sv), frames_list in accumulated_frames.items():
+                if frames_list:
+                    append_partitioned_output(
+                        frames=frames_list,
+                        output_name='volumen_diario_mercado_lima',
+                        expected_columns=EXPECTED_COLUMNS,
+                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                        scope_label=sl,
+                        scope_value=sv,
+                    )
+            _flush_control_batch(control_states, pending_event_rows)
+        finally:
+            extractor.close()
+            accumulated_frames.clear()
+            gc.collect()
         return shard_errors
 
     shard_error_groups = run_shards(

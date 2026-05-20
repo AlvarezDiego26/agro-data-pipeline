@@ -14,5 +14,8 @@
 **/data/review/
 ingesta-datos/sunat/Landing/
 ingesta-datos/midagri-comercio-exterior/Landing/
+ingesta-datos/midagri-boletines/data/
+ingesta-datos/midagri-boletines/Landing/
 **/CHECKLIST_FINAL_*.md
 brain/
+

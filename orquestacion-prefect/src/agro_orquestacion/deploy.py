@@ -12,6 +12,7 @@ from agro_orquestacion.config import get_settings
 from agro_orquestacion.flows import (
     duckdb_refresh_flow,
     midagri_ce_main_flow,
+    midagri_boletines_main_flow,
     serving_sync_flow,
     sisap_precios_flow,
     sisap_regiones_flow,
@@ -33,6 +34,7 @@ def _managed_pythonpath() -> str:
             "ingesta-datos/sisap/src",
             "ingesta-datos/sunat/src",
             "ingesta-datos/midagri-comercio-exterior/src",
+            "ingesta-datos/midagri-boletines/src",
         ]
     )
 from prefect.client.schemas.schedules import IntervalSchedule, CronSchedule
@@ -116,6 +118,10 @@ def _deploy_managed(settings) -> None:
     )
     midagri_runtime_env = _runtime_env(
         settings.midagri_ce_env(),
+        pythonpath=_managed_pythonpath(),
+    )
+    midagri_boletines_runtime_env = _runtime_env(
+        settings.midagri_boletines_env(),
         pythonpath=_managed_pythonpath(),
     )
     duckdb_runtime_env = _runtime_env(
@@ -269,6 +275,32 @@ def _deploy_managed(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    midagri_boletines_main_flow.from_source(
+        source=source,
+        entrypoint=_entrypoint("midagri_boletines_main_flow"),
+    ).deploy(
+        name="midagri-boletines-managed",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_midagri_boletines_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_midagri_boletines,
+            settings.prefect_midagri_boletines_interval_hours,
+            minute_offset=40,
+        ),
+        parameters={
+            "fecha_inicio": settings.midagri_boletines_fecha_inicio,
+            "fecha_fin": settings.midagri_boletines_fecha_fin or None,
+            "modo_carga": settings.midagri_boletines_modo_carga,
+            "rebuild_clean": False,
+        },
+        job_variables={
+            "pip_packages": settings.prefect_requirements,
+            "env": midagri_boletines_runtime_env,
+        },
+        tags=["midagri-boletines", "managed", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     duckdb_refresh_flow.from_source(
         source=source,
         entrypoint=_entrypoint("duckdb_refresh_flow"),
@@ -326,6 +358,10 @@ def _deploy_process(settings) -> None:
     }
     midagri_job_variables = {
         "env": _runtime_env(settings.midagri_ce_env(), pythonpath=runtime_pythonpath),
+        "working_dir": working_dir,
+    }
+    midagri_boletines_job_variables = {
+        "env": _runtime_env(settings.midagri_boletines_env(), pythonpath=runtime_pythonpath),
         "working_dir": working_dir,
     }
     duckdb_job_variables = {
@@ -451,6 +487,26 @@ def _deploy_process(settings) -> None:
         entrypoint_type=EntrypointType.MODULE_PATH,
     )
 
+    midagri_boletines_main = midagri_boletines_main_flow.to_deployment(
+        name="midagri-boletines-local",
+        work_pool_name=settings.prefect_target_work_pool_name,
+        concurrency_limit=_deployment_concurrency(settings.prefect_midagri_boletines_deployment_concurrency_limit),
+        **_schedule_kwargs(
+            settings.prefect_enable_schedules and settings.prefect_enable_midagri_boletines,
+            settings.prefect_midagri_boletines_interval_hours,
+            minute_offset=40,
+        ),
+        parameters={
+            "fecha_inicio": settings.midagri_boletines_fecha_inicio,
+            "fecha_fin": settings.midagri_boletines_fecha_fin or None,
+            "modo_carga": settings.midagri_boletines_modo_carga,
+            "rebuild_clean": False,
+        },
+        job_variables=midagri_boletines_job_variables,
+        tags=["midagri-boletines", "local", "process", "ingesta"],
+        entrypoint_type=EntrypointType.MODULE_PATH,
+    )
+
     duckdb_refresh = duckdb_refresh_flow.to_deployment(
         name="duckdb-refresh-local",
         work_pool_name=settings.prefect_target_work_pool_name,
@@ -489,6 +545,7 @@ def _deploy_process(settings) -> None:
         sisap_regiones,
         sunat_main,
         midagri_ce_main,
+        midagri_boletines_main,
         duckdb_refresh,
         serving_sync,
         work_pool_name=settings.prefect_target_work_pool_name,

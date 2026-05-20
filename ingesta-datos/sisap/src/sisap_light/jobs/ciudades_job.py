@@ -252,96 +252,107 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
+        import gc
         extractor = SisapCiudadesExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
-        for idx, query in enumerate(shard.items, start=1):
-            logger.info(
-                'Procesando {} shard={} {}/{} producto={} codigo={}',
-                output_name,
-                shard.shard_id,
-                idx,
-                len(shard.items),
-                query.producto_nombre,
-                query.producto_codigo,
-            )
-            register_control_query(control_states, output_name, output_name, 'region', region['nombre'], query)
-            try:
-                df, sample_html = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
-                if df.is_empty():
-                    sig = quick_html_data_signals(sample_html)
-                    logger.warning(
-                        'Sin resultados de {} para region={} producto={} codigo={} | '
-                        'HTML en data/raw/html/precio_diario_regiones (sufijos {}) | senales_ultima_respuesta={}',
-                        output_name,
-                        region['nombre'],
-                        query.producto_nombre,
-                        query.producto_codigo,
-                        '|'.join(_variables(modulo)),
-                        sig,
-                    )
-                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+        accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
+        try:
+            for idx, query in enumerate(shard.items, start=1):
+                logger.info(
+                    'Procesando {} shard={} {}/{} producto={} codigo={}',
+                    output_name,
+                    shard.shard_id,
+                    idx,
+                    len(shard.items),
+                    query.producto_nombre,
+                    query.producto_codigo,
+                )
+                register_control_query(control_states, output_name, output_name, 'region', region['nombre'], query)
+                try:
+                    df, sample_html = _fetch_city_frames(extractor, query, modulo=modulo, save_raw=True)
+                    if df.is_empty():
+                        sig = quick_html_data_signals(sample_html)
                         logger.warning(
-                            'El HTML de ciudades parece incluir tablas y fechas; si el portal muestra datos, '
-                            'revisar build_ciudades_metric_frame vs HTML actual.'
+                            'Sin resultados de {} para region={} producto={} codigo={} | '
+                            'HTML en data/raw/html/precio_diario_regiones (sufijos {}) | senales_ultima_respuesta={}',
+                            output_name,
+                            region['nombre'],
+                            query.producto_nombre,
+                            query.producto_codigo,
+                            '|'.join(_variables(modulo)),
+                            sig,
                         )
-                    register_control_success(
-                        control_states,
-                        output_name,
-                        output_name,
-                        'region',
-                        region['nombre'],
-                        query,
-                        estado='empty',
-                    )
+                        if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                            logger.warning(
+                                'El HTML de ciudades parece incluir tablas y fechas; si el portal muestra datos, '
+                                'revisar build_ciudades_metric_frame vs HTML actual.'
+                            )
+                        register_control_success(
+                            control_states,
+                            output_name,
+                            output_name,
+                            'region',
+                            region['nombre'],
+                            query,
+                            estado='empty',
+                        )
+                        event_row = build_control_event_row(
+                            output_name,
+                            output_name,
+                            'region',
+                            region['nombre'],
+                            query,
+                            'empty',
+                            'sin_resultados',
+                        )
+                        persist_control_events_batch([event_row])
+                        persist_control_states(control_states)
+                        shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
+                        continue
+                    validate_expected_columns(df, _expected_columns(modulo), f'{output_name}_{query.producto_codigo}')
+                    accumulated_frames.setdefault(('region', region['nombre']), []).append(df)
+                    register_control_success(control_states, output_name, output_name, 'region', region['nombre'], query)
                     event_row = build_control_event_row(
                         output_name,
                         output_name,
                         'region',
                         region['nombre'],
                         query,
-                        'empty',
-                        'sin_resultados',
+                        'success',
                     )
                     persist_control_events_batch([event_row])
                     persist_control_states(control_states)
-                    shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
-                    continue
-                validate_expected_columns(df, _expected_columns(modulo), f'{output_name}_{query.producto_codigo}')
-                append_partitioned_output(
-                    frames=[df],
-                    output_name=output_name,
-                    expected_columns=_expected_columns(modulo),
-                    sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
-                    scope_label='region',
-                    scope_value=region['nombre'],
-                )
-                register_control_success(control_states, output_name, output_name, 'region', region['nombre'], query)
-                event_row = build_control_event_row(
-                    output_name,
-                    output_name,
-                    'region',
-                    region['nombre'],
-                    query,
-                    'success',
-                )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
-            except Exception as exc:
-                logger.exception('Fallo extrayendo {} para {} ({})', output_name, query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, output_name, output_name, 'region', region['nombre'], query, str(exc))
-                event_row = build_control_event_row(
-                    output_name,
-                    output_name,
-                    'region',
-                    region['nombre'],
-                    query,
-                    'error',
-                    str(exc),
-                )
-                persist_control_events_batch([event_row])
-                persist_control_states(control_states)
-                shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
+                except Exception as exc:
+                    logger.exception('Fallo extrayendo {} para {} ({})', output_name, query.producto_nombre, query.producto_codigo)
+                    register_control_failure(control_states, output_name, output_name, 'region', region['nombre'], query, str(exc))
+                    event_row = build_control_event_row(
+                        output_name,
+                        output_name,
+                        'region',
+                        region['nombre'],
+                        query,
+                        'error',
+                        str(exc),
+                    )
+                    persist_control_events_batch([event_row])
+                    persist_control_states(control_states)
+                    shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
+            # Guardar todos los dataframes acumulados del shard en un solo lote
+            for (sl, sv), frames_list in accumulated_frames.items():
+                if frames_list:
+                    append_partitioned_output(
+                        frames=frames_list,
+                        output_name=output_name,
+                        expected_columns=_expected_columns(modulo),
+                        sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                        scope_label=sl,
+                        scope_value=sv,
+                    )
+        finally:
+            extractor.close()
+            accumulated_frames.clear()
+            gc.collect()
         return shard_errors
 
     shard_error_groups = run_shards(

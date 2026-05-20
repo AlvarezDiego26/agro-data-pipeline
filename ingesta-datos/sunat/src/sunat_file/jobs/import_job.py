@@ -287,38 +287,42 @@ def run_import() -> list[str]:
     processed: list[str] = []
     for file in scan_inbox():
         try:
-            logger.info('Procesando archivo {name}', name=file.source_name)
-            if file.extension == '.zip':
-                if not _is_target_export_zip(file.source_name.upper()):
+            try:
+                logger.info('Procesando archivo {name}', name=file.source_name)
+                if file.extension == '.zip':
+                    if not _is_target_export_zip(file.source_name.upper()):
+                        shutil.move(str(file.path), str(settings.sunat_processed_dir / file.path.name))
+                        _persist_import_control(file.source_name, 'skipped', 'zip_fuera_de_alcance_exportacion')
+                        _persist_import_event(file.source_name, 'skipped', 'zip_fuera_de_alcance_exportacion')
+                        processed.append(f'{file.source_name}: SKIPPED zip fuera del alcance de exportacion')
+                        continue
+                    dataset_names = _process_zip_file(file.path)
+                elif file.extension in SUPPORTED_DIRECT_EXTENSIONS:
+                    dataset_names = _process_direct_dbf(file.path)
+                elif file.extension in SKIPPED_DIRECT_EXTENSIONS:
                     shutil.move(str(file.path), str(settings.sunat_processed_dir / file.path.name))
-                    _persist_import_control(file.source_name, 'skipped', 'zip_fuera_de_alcance_exportacion')
-                    _persist_import_event(file.source_name, 'skipped', 'zip_fuera_de_alcance_exportacion')
-                    processed.append(f'{file.source_name}: SKIPPED zip fuera del alcance de exportacion')
+                    _persist_import_control(file.source_name, 'skipped', 'formato_complementario_fuera_de_flujo')
+                    _persist_import_event(file.source_name, 'skipped', 'formato_complementario_fuera_de_flujo')
+                    processed.append(f'{file.source_name}: SKIPPED formato complementario fuera del flujo final')
                     continue
-                dataset_names = _process_zip_file(file.path)
-            elif file.extension in SUPPORTED_DIRECT_EXTENSIONS:
-                dataset_names = _process_direct_dbf(file.path)
-            elif file.extension in SKIPPED_DIRECT_EXTENSIONS:
-                shutil.move(str(file.path), str(settings.sunat_processed_dir / file.path.name))
-                _persist_import_control(file.source_name, 'skipped', 'formato_complementario_fuera_de_flujo')
-                _persist_import_event(file.source_name, 'skipped', 'formato_complementario_fuera_de_flujo')
-                processed.append(f'{file.source_name}: SKIPPED formato complementario fuera del flujo final')
-                continue
-            else:
-                logger.warning('Archivo no soportado: {name}', name=file.source_name)
-                _persist_import_control(file.source_name, 'skipped', 'archivo_no_soportado')
-                _persist_import_event(file.source_name, 'skipped', 'archivo_no_soportado')
-                continue
+                else:
+                    logger.warning('Archivo no soportado: {name}', name=file.source_name)
+                    _persist_import_control(file.source_name, 'skipped', 'archivo_no_soportado')
+                    _persist_import_event(file.source_name, 'skipped', 'archivo_no_soportado')
+                    continue
 
-            shutil.move(str(file.path), str(settings.sunat_processed_dir / file.path.name))
-            _persist_import_control(file.source_name, 'success')
-            _persist_import_event(file.source_name, 'success')
-            for dataset_name in dataset_names:
-                processed.append(f'{file.source_name} -> {dataset_name}')
-        except Exception as exc:
-            logger.exception('Fallo procesando {name}', name=file.source_name)
-            shutil.move(str(file.path), str(settings.sunat_error_dir / file.path.name))
-            _persist_import_control(file.source_name, 'error', str(exc))
-            _persist_import_event(file.source_name, 'error', str(exc))
-            processed.append(f'{file.source_name}: ERROR {exc}')
+                shutil.move(str(file.path), str(settings.sunat_processed_dir / file.path.name))
+                _persist_import_control(file.source_name, 'success')
+                _persist_import_event(file.source_name, 'success')
+                for dataset_name in dataset_names:
+                    processed.append(f'{file.source_name} -> {dataset_name}')
+            except Exception as exc:
+                logger.exception('Fallo procesando {name}', name=file.source_name)
+                shutil.move(str(file.path), str(settings.sunat_error_dir / file.path.name))
+                _persist_import_control(file.source_name, 'error', str(exc))
+                _persist_import_event(file.source_name, 'error', str(exc))
+                processed.append(f'{file.source_name}: ERROR {exc}')
+        finally:
+            import gc
+            gc.collect()
     return processed

@@ -32,3 +32,9 @@ class SisapCiudadesExtractor:
         params = self.build_params(query, variable)
         return self.http.get(self.settings.sisap_ciudades_report_url, params=params)
 
+    def close(self) -> None:
+        try:
+            self.http.close()
+        except Exception:
+            pass
+

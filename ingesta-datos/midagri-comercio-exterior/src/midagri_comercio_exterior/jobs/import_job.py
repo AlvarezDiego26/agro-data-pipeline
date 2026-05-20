@@ -611,43 +611,47 @@ def run_import() -> list[str]:
 
     for file in scan_inbox():
         try:
-            file_hash = _file_sha256(file.path)
-            if file_hash in successful_import_hashes:
+            try:
+                file_hash = _file_sha256(file.path)
+                if file_hash in successful_import_hashes:
+                    shutil.move(str(file.path), str(settings.midagri_ce_processed_dir / file.path.name))
+                    _persist_import_event(
+                        "archivo_version",
+                        file_hash,
+                        "skipped",
+                        "version_ya_importada",
+                        extra={"archivo_origen": file.source_name},
+                    )
+                    processed.append(f"{file.source_name}: SKIPPED version_ya_importada")
+                    continue
+
+                logger.info("Procesando archivo {name}", name=file.source_name)
+                if file.extension in SUPPORTED_ARCHIVE_EXTENSIONS:
+                    dataset_names = _process_zip_file(file.path)
+                elif file.extension in SUPPORTED_DIRECT_EXTENSIONS:
+                    dataset_names = _process_excel_file(file.path)
+                else:
+                    logger.warning("Archivo no soportado: {name}", name=file.source_name)
+                    _persist_import_control("archivo", file.source_name, "skipped", "archivo_no_soportado")
+                    _persist_import_event("archivo", file.source_name, "skipped", "archivo_no_soportado")
+                    continue
+
                 shutil.move(str(file.path), str(settings.midagri_ce_processed_dir / file.path.name))
-                _persist_import_event(
-                    "archivo_version",
-                    file_hash,
-                    "skipped",
-                    "version_ya_importada",
-                    extra={"archivo_origen": file.source_name},
-                )
-                processed.append(f"{file.source_name}: SKIPPED version_ya_importada")
-                continue
-
-            logger.info("Procesando archivo {name}", name=file.source_name)
-            if file.extension in SUPPORTED_ARCHIVE_EXTENSIONS:
-                dataset_names = _process_zip_file(file.path)
-            elif file.extension in SUPPORTED_DIRECT_EXTENSIONS:
-                dataset_names = _process_excel_file(file.path)
-            else:
-                logger.warning("Archivo no soportado: {name}", name=file.source_name)
-                _persist_import_control("archivo", file.source_name, "skipped", "archivo_no_soportado")
-                _persist_import_event("archivo", file.source_name, "skipped", "archivo_no_soportado")
-                continue
-
-            shutil.move(str(file.path), str(settings.midagri_ce_processed_dir / file.path.name))
-            import_extra = {"archivo_origen": file.source_name, "archivo_hash": file_hash}
-            _persist_import_control("archivo", file.source_name, "success", extra=import_extra)
-            _persist_import_event("archivo", file.source_name, "success", extra=import_extra)
-            _persist_import_control("archivo_version", file_hash, "success", extra={"archivo_origen": file.source_name})
-            _persist_import_event("archivo_version", file_hash, "success", extra={"archivo_origen": file.source_name})
-            successful_import_hashes.add(file_hash)
-            for dataset_name in dataset_names:
-                processed.append(f"{file.source_name} -> {dataset_name}")
-        except Exception as exc:
-            logger.exception("Fallo procesando {name}", name=file.source_name)
-            shutil.move(str(file.path), str(settings.midagri_ce_error_dir / file.path.name))
-            _persist_import_control("archivo", file.source_name, "error", str(exc))
-            _persist_import_event("archivo", file.source_name, "error", str(exc))
-            processed.append(f"{file.source_name}: ERROR {exc}")
+                import_extra = {"archivo_origen": file.source_name, "archivo_hash": file_hash}
+                _persist_import_control("archivo", file.source_name, "success", extra=import_extra)
+                _persist_import_event("archivo", file.source_name, "success", extra=import_extra)
+                _persist_import_control("archivo_version", file_hash, "success", extra={"archivo_origen": file.source_name})
+                _persist_import_event("archivo_version", file_hash, "success", extra={"archivo_origen": file.source_name})
+                successful_import_hashes.add(file_hash)
+                for dataset_name in dataset_names:
+                    processed.append(f"{file.source_name} -> {dataset_name}")
+            except Exception as exc:
+                logger.exception("Fallo procesando {name}", name=file.source_name)
+                shutil.move(str(file.path), str(settings.midagri_ce_error_dir / file.path.name))
+                _persist_import_control("archivo", file.source_name, "error", str(exc))
+                _persist_import_event("archivo", file.source_name, "error", str(exc))
+                processed.append(f"{file.source_name}: ERROR {exc}")
+        finally:
+            import gc
+            gc.collect()
     return processed

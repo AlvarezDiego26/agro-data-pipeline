@@ -170,107 +170,118 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
+        import gc
         extractor = SisapMayoristaExtractor()
         shard_errors: list[dict[str, str]] = []
         control_states = init_control_states()
         pending_event_rows: list[dict[str, object]] = []
-        for idx, query in enumerate(shard.items, start=1):
-            logger.info(
-                'Procesando precios shard={} {}/{} mercado={} producto={} codigo={}',
-                shard.shard_id,
-                idx,
-                len(shard.items),
-                query.mercado_codigo,
-                query.producto_nombre,
-                query.producto_codigo,
-            )
-            register_control_query(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
-            try:
-                df, _, sample_html = _fetch_price_frames(extractor, query, save_raw=True)
-                if df.is_empty():
-                    sig = quick_html_data_signals(sample_html)
-                    logger.warning(
-                        'Sin resultados de precios para mercado={} producto={} codigo={} | '
-                        'HTML por metrica en data/raw/html/{} (sufijos precio_min|prom|max) | senales_ultima_respuesta={}',
-                        query.mercado_codigo,
-                        query.producto_nombre,
-                        query.producto_codigo,
-                        ModuloSisap.MAYORISTA_PRECIOS.value,
-                        sig,
-                    )
-                    if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+        accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
+        try:
+            for idx, query in enumerate(shard.items, start=1):
+                logger.info(
+                    'Procesando precios shard={} {}/{} mercado={} producto={} codigo={}',
+                    shard.shard_id,
+                    idx,
+                    len(shard.items),
+                    query.mercado_codigo,
+                    query.producto_nombre,
+                    query.producto_codigo,
+                )
+                register_control_query(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
+                try:
+                    df, _, sample_html = _fetch_price_frames(extractor, query, save_raw=True)
+                    if df.is_empty():
+                        sig = quick_html_data_signals(sample_html)
                         logger.warning(
-                            'El HTML de precios parece incluir tablas y fechas; si el portal muestra datos, '
-                            'revisar build_precio_metric_frame / detect_primary_table vs estructura actual del portal.'
+                            'Sin resultados de precios para mercado={} producto={} codigo={} | '
+                            'HTML por metrica en data/raw/html/{} (sufijos precio_min|prom|max) | senales_ultima_respuesta={}',
+                            query.mercado_codigo,
+                            query.producto_nombre,
+                            query.producto_codigo,
+                            ModuloSisap.MAYORISTA_PRECIOS.value,
+                            sig,
                         )
-                    register_control_success(
-                        control_states,
-                        'precios',
-                        'precios_diarios_mercado_lima',
-                        scope_label,
-                        scope_value,
-                        query,
-                        estado='empty',
-                    )
+                        if sig.get('approx_date_tokens', 0) and sig.get('table_tags', 0):
+                            logger.warning(
+                                'El HTML de precios parece incluir tablas y fechas; si el portal muestra datos, '
+                                'revisar build_precio_metric_frame / detect_primary_table vs estructura actual del portal.'
+                            )
+                        register_control_success(
+                            control_states,
+                            'precios',
+                            'precios_diarios_mercado_lima',
+                            scope_label,
+                            scope_value,
+                            query,
+                            estado='empty',
+                        )
+                        event_row = build_control_event_row(
+                            'precios',
+                            'precios_diarios_mercado_lima',
+                            scope_label,
+                            scope_value,
+                            query,
+                            'empty',
+                            'sin_resultados',
+                        )
+                        pending_event_rows.append(event_row)
+                        if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                            _flush_control_batch(control_states, pending_event_rows)
+                        continue
+
+                    validate_expected_columns(df, EXPECTED_COLUMNS, f'precios_{query.producto_codigo}')
+                    accumulated_frames.setdefault((scope_label, scope_value), []).append(df)
+                    register_control_success(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
                     event_row = build_control_event_row(
                         'precios',
                         'precios_diarios_mercado_lima',
                         scope_label,
                         scope_value,
                         query,
-                        'empty',
-                        'sin_resultados',
+                        'success',
                     )
                     pending_event_rows.append(event_row)
                     if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                         _flush_control_batch(control_states, pending_event_rows)
-                    continue
-
-                validate_expected_columns(df, EXPECTED_COLUMNS, f'precios_{query.producto_codigo}')
-                append_partitioned_output(
-                    frames=[df],
-                    output_name='precios_diarios_mercado_lima',
-                    expected_columns=EXPECTED_COLUMNS,
-                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                    scope_label=scope_label,
-                    scope_value=scope_value,
-                )
-                register_control_success(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query)
-                event_row = build_control_event_row(
-                    'precios',
-                    'precios_diarios_mercado_lima',
-                    scope_label,
-                    scope_value,
-                    query,
-                    'success',
-                )
-                pending_event_rows.append(event_row)
-                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
-                    _flush_control_batch(control_states, pending_event_rows)
-            except Exception as exc:
-                logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
-                register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query, str(exc))
-                event_row = build_control_event_row(
-                    'precios',
-                    'precios_diarios_mercado_lima',
-                    scope_label,
-                    scope_value,
-                    query,
-                    'error',
-                    str(exc),
-                )
-                pending_event_rows.append(event_row)
-                if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
-                    _flush_control_batch(control_states, pending_event_rows)
-                shard_errors.append(
-                    {
-                        'mercado_codigo': query.mercado_codigo or '',
-                        'producto_codigo': query.producto_codigo,
-                        'producto_nombre': query.producto_nombre,
-                        'motivo': str(exc),
-                    }
-                )
-        _flush_control_batch(control_states, pending_event_rows)
+                except Exception as exc:
+                    logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
+                    register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query, str(exc))
+                    event_row = build_control_event_row(
+                        'precios',
+                        'precios_diarios_mercado_lima',
+                        scope_label,
+                        scope_value,
+                        query,
+                        'error',
+                        str(exc),
+                    )
+                    pending_event_rows.append(event_row)
+                    if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                        _flush_control_batch(control_states, pending_event_rows)
+                    shard_errors.append(
+                        {
+                            'mercado_codigo': query.mercado_codigo or '',
+                            'producto_codigo': query.producto_codigo,
+                            'producto_nombre': query.producto_nombre,
+                            'motivo': str(exc),
+                        }
+                    )
+            # Guardar todos los dataframes acumulados del shard en un solo lote
+            for (sl, sv), frames_list in accumulated_frames.items():
+                if frames_list:
+                    append_partitioned_output(
+                        frames=frames_list,
+                        output_name='precios_diarios_mercado_lima',
+                        expected_columns=EXPECTED_COLUMNS,
+                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                        scope_label=sl,
+                        scope_value=sv,
+                    )
+            _flush_control_batch(control_states, pending_event_rows)
+        finally:
+            extractor.close()
+            accumulated_frames.clear()
+            gc.collect()
         return shard_errors
 
     shard_error_groups = run_shards(

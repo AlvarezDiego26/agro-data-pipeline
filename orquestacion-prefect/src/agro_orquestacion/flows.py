@@ -169,6 +169,42 @@ def run_midagri_ce_task(
 
 
 @task(
+    retries=3,
+    retry_delay_seconds=[60, 300, 900],
+    tags=["midagri-boletines-concurrency"]
+)
+def run_midagri_boletines_task(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    rebuild_clean: bool = False,
+) -> None:
+    settings = get_settings()
+    python_executable = ensure_runtime_python(
+        "midagri-boletines",
+        settings.midagri_boletines_requirements_path,
+        settings.midagri_boletines_root,
+        settings.runtime_venvs_root,
+    )
+    environment = _merge_env(
+        settings.midagri_boletines_env(),
+        {
+            "MIDAGRI_BOLETINES_FECHA_INICIO": fecha_inicio,
+            "MIDAGRI_BOLETINES_FECHA_FIN": fecha_fin,
+            "MIDAGRI_BOLETINES_MODO_CARGA": modo_carga,
+        },
+    )
+    arguments = ["rebuild-clean"] if rebuild_clean else ["run-main"]
+    run_python_module(
+        "midagri_boletines.cli",
+        arguments=arguments,
+        working_dir=settings.midagri_boletines_root,
+        environment=environment,
+        python_executable=python_executable,
+    )
+
+
+@task(
     retries=2,
     retry_delay_seconds=[60, 300],
     tags=["duckdb-refresh"]
@@ -689,14 +725,35 @@ def midagri_ce_main_flow(
     )
 
 
+@flow(name="midagri-boletines-main-flow", log_prints=True)
+def midagri_boletines_main_flow(
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    modo_carga: str | None = None,
+    rebuild_clean: bool = False,
+) -> None:
+    run_midagri_boletines_task(
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        modo_carga=modo_carga,
+        rebuild_clean=rebuild_clean,
+    )
+
+
 @flow(name="agro-ingesta-flow", log_prints=True)
 def agro_ingesta_flow(
     run_sisap: bool = True,
     run_sunat: bool = True,
+    run_midagri_ce: bool = True,
+    run_midagri_boletines: bool = True,
     sisap_fecha_inicio: str | None = None,
     sisap_fecha_fin: str | None = None,
     sunat_fecha_corte_inicio: str | None = None,
     sunat_fecha_corte_fin: str | None = None,
+    midagri_ce_fecha_corte_inicio: str | None = None,
+    midagri_ce_fecha_corte_fin: str | None = None,
+    midagri_boletines_fecha_inicio: str | None = None,
+    midagri_boletines_fecha_fin: str | None = None,
     refresh_duckdb: bool | None = None,
 ) -> None:
     settings = get_settings()
@@ -715,11 +772,29 @@ def agro_ingesta_flow(
                 fecha_corte_fin=sunat_fecha_corte_fin,
             )
 
+    def _run_midagri_ce():
+        if run_midagri_ce and settings.prefect_enable_midagri_ce:
+            midagri_ce_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_ce_timeout_minutes)(
+                fecha_corte_inicio=midagri_ce_fecha_corte_inicio,
+                fecha_corte_fin=midagri_ce_fecha_corte_fin,
+            )
+
+    def _run_midagri_boletines():
+        if run_midagri_boletines and settings.prefect_enable_midagri_boletines:
+            midagri_boletines_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_boletines_timeout_minutes)(
+                fecha_inicio=midagri_boletines_fecha_inicio,
+                fecha_fin=midagri_boletines_fecha_fin,
+            )
+
     requested_pipelines = []
     if run_sisap and settings.prefect_enable_sisap:
         requested_pipelines.append(_run_sisap)
     if run_sunat and settings.prefect_enable_sunat:
         requested_pipelines.append(_run_sunat)
+    if run_midagri_ce and settings.prefect_enable_midagri_ce:
+        requested_pipelines.append(_run_midagri_ce)
+    if run_midagri_boletines and settings.prefect_enable_midagri_boletines:
+        requested_pipelines.append(_run_midagri_boletines)
 
     max_parallel_pipelines = max(
         min(settings.prefect_max_parallel_pipelines, len(requested_pipelines) or 1),
@@ -765,6 +840,8 @@ def _main() -> None:
         sunat_main_flow.with_options(timeout_seconds=60 * settings.prefect_sunat_timeout_minutes)()
     elif mode == "midagri-ce":
         midagri_ce_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_ce_timeout_minutes)()
+    elif mode == "midagri-boletines":
+        midagri_boletines_main_flow.with_options(timeout_seconds=60 * settings.prefect_midagri_boletines_timeout_minutes)()
     elif mode == "duckdb-refresh":
         duckdb_refresh_flow.with_options(timeout_seconds=60 * settings.prefect_duckdb_refresh_timeout_minutes)()
     elif mode == "serving-sync":

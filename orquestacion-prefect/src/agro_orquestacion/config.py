@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     prefect_enable_sisap: bool = True
     prefect_enable_sunat: bool = True
     prefect_enable_midagri_ce: bool = True
+    prefect_enable_midagri_boletines: bool = True
     prefect_enable_duckdb_refresh: bool = True
     prefect_enable_duckdb_refresh_schedule: bool = False
     prefect_enable_serving_sync: bool = True
@@ -32,6 +33,8 @@ class Settings(BaseSettings):
     prefect_sunat_timeout_minutes: int = 180
     prefect_midagri_ce_interval_hours: int = 24
     prefect_midagri_ce_timeout_minutes: int = 120
+    prefect_midagri_boletines_interval_hours: int = 12
+    prefect_midagri_boletines_timeout_minutes: int = 120
     prefect_duckdb_refresh_interval_hours: int = 6
     prefect_duckdb_refresh_timeout_minutes: int = 90
     prefect_serving_sync_interval_hours: int = 12
@@ -41,6 +44,7 @@ class Settings(BaseSettings):
     prefect_sisap_deployment_concurrency_limit: int = 1
     prefect_sunat_deployment_concurrency_limit: int = 1
     prefect_midagri_ce_deployment_concurrency_limit: int = 1
+    prefect_midagri_boletines_deployment_concurrency_limit: int = 1
     prefect_duckdb_deployment_concurrency_limit: int = 1
     prefect_serving_sync_deployment_concurrency_limit: int = 1
     prefect_repo_url: str = "https://github.com/tu-organizacion/tu-repo.git"
@@ -70,6 +74,10 @@ class Settings(BaseSettings):
     sisap_control_events_dataset: str = "control/ingesta_control_eventos"
     sunat_minio_prefix: str = "Landing/sunat"
     midagri_ce_minio_prefix: str = "Landing/midagri_comercio_exterior"
+    midagri_boletines_minio_prefix: str = "Landing/midagri_boletines"
+    midagri_boletines_fecha_inicio: str = "2016-01-01"
+    midagri_boletines_fecha_fin: str = ""
+    midagri_boletines_modo_carga: str = "incremental"
 
     sisap_fecha_inicio: str = "2016-01-01"
     sisap_fecha_fin: str = ""
@@ -123,6 +131,14 @@ class Settings(BaseSettings):
     @property
     def midagri_ce_root(self) -> Path:
         return self.repo_root / "ingesta-datos" / "midagri-comercio-exterior"
+
+    @property
+    def midagri_boletines_root(self) -> Path:
+        return self.repo_root / "ingesta-datos" / "midagri-boletines"
+
+    @property
+    def midagri_boletines_requirements_path(self) -> Path:
+        return self.midagri_boletines_root / "requirements.txt"
 
     @property
     def runtime_venvs_root(self) -> Path:
@@ -270,6 +286,22 @@ class Settings(BaseSettings):
             "MIDAGRI_CE_FECHA_CORTE_INICIO": self.midagri_ce_fecha_corte_inicio,
             "MIDAGRI_CE_FECHA_CORTE_FIN": self.midagri_ce_fecha_corte_fin,
             "MIDAGRI_CE_MODO_CARGA": self.midagri_ce_modo_carga,
+        }
+
+    def midagri_boletines_env(self) -> dict[str, str]:
+        return {
+            "PYTHONPATH": "src",
+            "STORAGE_BACKEND": self.storage_backend,
+            "DELTA_ENABLED": str(self.delta_enabled).lower(),
+            "MINIO_ENDPOINT": self.minio_endpoint,
+            "MINIO_ACCESS_KEY": self.minio_access_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
+            "MINIO_BUCKET": self.minio_bucket,
+            "MINIO_REGION": self.minio_region,
+            "MINIO_PREFIX": self.midagri_boletines_minio_prefix,
+            "MIDAGRI_BOLETINES_FECHA_INICIO": self.midagri_boletines_fecha_inicio,
+            "MIDAGRI_BOLETINES_FECHA_FIN": self.midagri_boletines_fecha_fin,
+            "MIDAGRI_BOLETINES_MODO_CARGA": self.midagri_boletines_modo_carga,
         }
 
     def duckdb_env(self) -> dict[str, str]:

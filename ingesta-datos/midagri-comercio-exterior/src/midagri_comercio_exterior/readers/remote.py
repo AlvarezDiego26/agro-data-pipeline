@@ -56,7 +56,11 @@ def _http_download_file(url: str, destination: Path) -> Path:
             request = Request(url, headers={"User-Agent": USER_AGENT})
             with urlopen(request, timeout=settings.midagri_ce_download_timeout_seconds) as response:
                 with temp_path.open("wb") as output:
-                    output.write(response.read())
+                    while True:
+                        chunk = response.read(65536)
+                        if not chunk:
+                            break
+                        output.write(chunk)
             temp_path.replace(destination)
             return destination
         except Exception as exc:
