@@ -5,6 +5,7 @@ import polars as pl
 DATASET_BUSINESS_KEYS = {
     "base_agro_delta": ["registro_hash_fuente"],
     "sunat_exportaciones_agrarias_frescas": ["registro_hash_fuente"],
+    "exportaciones_filtradas": ["registro_hash_fuente"],
 }
 
 
