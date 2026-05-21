@@ -225,29 +225,97 @@ def build_monthly_agrarian_curated(df: pl.DataFrame) -> pl.DataFrame:
             }
         )
 
-    metadata = (
-        df.select(["archivo_miembro", "archivo_origen"])
-        .to_struct("archivo_meta")
-        .map_elements(
-            lambda row: (
-                *_classify_member_name(row["archivo_miembro"], row["archivo_origen"]),
-                *_extract_month_from_name(row["archivo_miembro"], row["archivo_origen"]),
-            ),
-            return_dtype=pl.Struct(
-                [
-                    pl.Field("categoria_agraria", pl.Utf8),
-                    pl.Field("dominio_fuente", pl.Utf8),
-                    pl.Field("mes_publicacion", pl.Int64),
-                    pl.Field("mes_publicacion_nombre", pl.Utf8),
-                ]
-            ),
-        )
-        .alias("curated_meta")
+    candidate = pl.concat_str(
+        [
+            pl.col("archivo_miembro").fill_null(""),
+            pl.lit(" "),
+            pl.col("archivo_origen").fill_null(""),
+        ],
+        separator="",
+    ).str.to_lowercase()
+
+    category_expr = (
+        pl.when(candidate.str.contains("agricola"))
+        .then(pl.lit("produccion_agricola"))
+        .when(candidate.str.contains("pecuario|avicola"))
+        .then(pl.lit("produccion_pecuaria_avicola"))
+        .when(candidate.str.contains("agroindustria"))
+        .then(pl.lit("agroindustria"))
+        .when(candidate.str.contains("comercio\\s*-?\\s*interno"))
+        .then(pl.lit("comercio_interno"))
+        .when(candidate.str.contains("comercio\\s*-?\\s*externo"))
+        .then(pl.lit("comercio_exterior"))
+        .when(candidate.str.contains("insumos\\s*y\\s*servicios|insumos-y-servicios"))
+        .then(pl.lit("insumos_y_servicios_agrarios"))
+        .otherwise(pl.lit("otros_agrarios"))
+        .alias("categoria_agraria")
+    )
+
+    month_name_expr = (
+        pl.when(candidate.str.contains("enero"))
+        .then(pl.lit("enero"))
+        .when(candidate.str.contains("febrero"))
+        .then(pl.lit("febrero"))
+        .when(candidate.str.contains("marzo"))
+        .then(pl.lit("marzo"))
+        .when(candidate.str.contains("abril"))
+        .then(pl.lit("abril"))
+        .when(candidate.str.contains("mayo"))
+        .then(pl.lit("mayo"))
+        .when(candidate.str.contains("junio"))
+        .then(pl.lit("junio"))
+        .when(candidate.str.contains("julio"))
+        .then(pl.lit("julio"))
+        .when(candidate.str.contains("agosto"))
+        .then(pl.lit("agosto"))
+        .when(candidate.str.contains("septiembre|setiembre"))
+        .then(pl.lit("septiembre"))
+        .when(candidate.str.contains("octubre"))
+        .then(pl.lit("octubre"))
+        .when(candidate.str.contains("noviembre"))
+        .then(pl.lit("noviembre"))
+        .when(candidate.str.contains("diciembre"))
+        .then(pl.lit("diciembre"))
+        .otherwise(pl.lit(None, dtype=pl.Utf8))
+        .alias("mes_publicacion_nombre")
+    )
+
+    month_number_expr = (
+        pl.when(candidate.str.contains("enero"))
+        .then(pl.lit(1))
+        .when(candidate.str.contains("febrero"))
+        .then(pl.lit(2))
+        .when(candidate.str.contains("marzo"))
+        .then(pl.lit(3))
+        .when(candidate.str.contains("abril"))
+        .then(pl.lit(4))
+        .when(candidate.str.contains("mayo"))
+        .then(pl.lit(5))
+        .when(candidate.str.contains("junio"))
+        .then(pl.lit(6))
+        .when(candidate.str.contains("julio"))
+        .then(pl.lit(7))
+        .when(candidate.str.contains("agosto"))
+        .then(pl.lit(8))
+        .when(candidate.str.contains("septiembre|setiembre"))
+        .then(pl.lit(9))
+        .when(candidate.str.contains("octubre"))
+        .then(pl.lit(10))
+        .when(candidate.str.contains("noviembre"))
+        .then(pl.lit(11))
+        .when(candidate.str.contains("diciembre"))
+        .then(pl.lit(12))
+        .otherwise(pl.lit(None, dtype=pl.Int64))
+        .alias("mes_publicacion")
     )
 
     return (
-        df.with_columns(metadata)
-        .unnest("curated_meta")
+        df.with_columns(
+            category_expr,
+            pl.lit("agrario").alias("dominio_fuente"),
+            month_number_expr,
+            month_name_expr,
+        )
         .with_columns(
             pl.col("hoja_nombre").str.to_uppercase().str.contains("INDICE").alias("es_hoja_indice")
         )

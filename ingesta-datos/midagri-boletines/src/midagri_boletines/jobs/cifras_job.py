@@ -145,3 +145,7 @@ def run_cifras_pipeline(
     logger.success(
         f"Pipeline mensual completado. Procesados con exito: {processed_count} archivos. Fallidos: {failures_count} archivos."
     )
+    if failures_count > 0:
+        raise RuntimeError(
+            f"El pipeline mensual de 'El Agro en Cifras' termino con {failures_count} archivo(s) fallido(s)."
+        )
