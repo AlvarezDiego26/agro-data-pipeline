@@ -55,6 +55,7 @@ EXPECTED_COLUMNS = [
 
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = 20
+OUTPUT_FLUSH_EVERY = 20
 _NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
 _DATE_VALUE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
@@ -78,6 +79,21 @@ def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object
         persist_control_events_batch(event_rows)
         event_rows.clear()
     persist_control_states(control_states)
+
+
+def _flush_accumulated_frames(accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]]) -> None:
+    for (scope_label, scope_value), frames_list in accumulated_frames.items():
+        if not frames_list:
+            continue
+        append_partitioned_output(
+            frames=frames_list,
+            output_name='volumen_diario_mercado_lima',
+            expected_columns=EXPECTED_COLUMNS,
+            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            scope_label=scope_label,
+            scope_value=scope_value,
+        )
+    accumulated_frames.clear()
 
 
 def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
@@ -216,6 +232,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         control_states = init_control_states()
         pending_event_rows: list[dict[str, object]] = []
         accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
+        pending_output_frames = 0
         try:
             for idx, query in enumerate(shard.items, start=1):
                 logger.info(
@@ -280,6 +297,10 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
 
                     validate_expected_columns(df, EXPECTED_COLUMNS, f'volumen_{query.producto_codigo}')
                     accumulated_frames.setdefault((sl, sv), []).append(df)
+                    pending_output_frames += 1
+                    if pending_output_frames >= OUTPUT_FLUSH_EVERY:
+                        _flush_accumulated_frames(accumulated_frames)
+                        pending_output_frames = 0
                     register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
                     event_row = build_control_event_row(
                         'volumen',
@@ -315,17 +336,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                             'motivo': str(exc),
                         }
                     )
-            # Guardar todos los dataframes acumulados en una sola llamada de lote por cada grupo (sl, sv)
-            for (sl, sv), frames_list in accumulated_frames.items():
-                if frames_list:
-                    append_partitioned_output(
-                        frames=frames_list,
-                        output_name='volumen_diario_mercado_lima',
-                        expected_columns=EXPECTED_COLUMNS,
-                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                        scope_label=sl,
-                        scope_value=sv,
-                    )
+            _flush_accumulated_frames(accumulated_frames)
             _flush_control_batch(control_states, pending_event_rows)
         finally:
             extractor.close()

@@ -418,21 +418,33 @@ def resolve_query_dates(
         mercado_codigo,
     )
 
-    # La fuente de verdad para cobertura es la data escrita.
-    # El control solo sirve como apoyo cuando todavia no existe data materializada.
-    min_loaded = data_min_loaded if data_min_loaded is not None else control_min_loaded
-    max_loaded = data_max_loaded if data_max_loaded is not None else control_max_loaded
-    last_loaded = data_max_loaded if data_max_loaded is not None else control_last_loaded
+    # Preferimos la data escrita cuando existe, pero si una cobertura historica
+    # fue validada solo con queries vacias, la tabla de control debe evitar
+    # relanzar el mismo backfill completo en corridas posteriores.
+    has_materialized_data = data_max_loaded is not None
+    min_loaded = data_min_loaded if has_materialized_data else control_min_loaded
+    max_loaded = data_max_loaded if has_materialized_data else control_max_loaded
+    last_loaded = data_max_loaded if has_materialized_data else control_last_loaded
 
-    if data_max_loaded is None:
+    if last_loaded is None:
         logger.info(
-            'No se encontro data previa materializada para {} {}. '
+            'No se encontro data previa materializada ni cobertura valida en control para {} {}. '
             'Iniciando carga historica desde la fecha configurada: {}',
             output_name,
             producto_codigo,
             fecha_inicio,
         )
         return fecha_inicio, fecha_fin
+
+    if not has_materialized_data:
+        logger.info(
+            'No se encontro data previa materializada para {} {}, pero se reutilizara la cobertura '
+            'registrada en la tabla de control (ultima={}, historico_completo={}).',
+            output_name,
+            producto_codigo,
+            last_loaded,
+            history_complete,
+        )
 
     if min_loaded is not None and min_loaded > fecha_inicio:
         if history_complete:
