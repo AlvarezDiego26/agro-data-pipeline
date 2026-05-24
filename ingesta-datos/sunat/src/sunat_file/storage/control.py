@@ -174,8 +174,7 @@ def _control_change_predicate(columns: list[str]) -> str | None:
     return " OR ".join(comparisons)
 
 
-def _read_local_control_state() -> pl.DataFrame:
-    path = _local_control_state_path()
+def _read_parquet_if_exists(path: Path, *, error_message: str) -> pl.DataFrame:
     if not path.exists():
         return pl.DataFrame()
     try:
@@ -188,16 +187,30 @@ def _read_local_control_state() -> pl.DataFrame:
             except Exception:
                 pass
         else:
-            logger.exception('No se pudo leer el cache local de control SUNAT en {}', path)
+            logger.exception(error_message, path)
         return pl.DataFrame()
 
 
-def _write_local_control_state(control_df: pl.DataFrame) -> None:
-    path = _local_control_state_path()
-    if control_df.is_empty():
+def _write_parquet(path: Path, frame: pl.DataFrame, *, keep_empty_file: bool) -> None:
+    if frame.is_empty():
+        if not keep_empty_file and path.exists():
+            path.unlink()
+        if path.exists():
+            return
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    control_df.write_parquet(path)
+    frame.write_parquet(path)
+
+
+def _read_local_control_state() -> pl.DataFrame:
+    return _read_parquet_if_exists(
+        _local_control_state_path(),
+        error_message='No se pudo leer el cache local de control SUNAT en {}',
+    )
+
+
+def _write_local_control_state(control_df: pl.DataFrame) -> None:
+    _write_parquet(_local_control_state_path(), control_df, keep_empty_file=True)
 
 
 def _read_pending_control_state() -> pl.DataFrame:
@@ -212,39 +225,18 @@ def _read_pending_control_state() -> pl.DataFrame:
 
 
 def _write_pending_control_state(control_df: pl.DataFrame) -> None:
-    path = _pending_control_state_path()
-    if control_df.is_empty():
-        if path.exists():
-            path.unlink()
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    control_df.write_parquet(path)
+    _write_parquet(_pending_control_state_path(), control_df, keep_empty_file=False)
 
 
 def _read_local_control_events() -> pl.DataFrame:
-    path = _local_control_events_path()
-    if not path.exists():
-        return pl.DataFrame()
-    try:
-        return _normalize_control_frame(pl.read_parquet(path))
-    except Exception as e:
-        if "File out of specification" in str(e) or "PAR1" in str(e):
-            logger.error(f"Journal de eventos CORRUPTO detectado en {path}. Eliminando para auto-recuperacion.")
-            try:
-                path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        else:
-            logger.exception('No se pudo leer el journal local de eventos SUNAT en {}', path)
-        return pl.DataFrame()
+    return _read_parquet_if_exists(
+        _local_control_events_path(),
+        error_message='No se pudo leer el journal local de eventos SUNAT en {}',
+    )
 
 
 def _write_local_control_events(events_df: pl.DataFrame) -> None:
-    path = _local_control_events_path()
-    if events_df.is_empty():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    events_df.write_parquet(path)
+    _write_parquet(_local_control_events_path(), events_df, keep_empty_file=True)
 
 
 def _read_pending_control_events() -> pl.DataFrame:
@@ -259,13 +251,53 @@ def _read_pending_control_events() -> pl.DataFrame:
 
 
 def _write_pending_control_events(events_df: pl.DataFrame) -> None:
-    path = _pending_control_events_path()
-    if events_df.is_empty():
-        if path.exists():
-            path.unlink()
+    _write_parquet(_pending_control_events_path(), events_df, keep_empty_file=False)
+
+
+def _append_delta_records(table_uri: str, frame: pl.DataFrame, storage_options: dict[str, str] | None) -> None:
+    with DELTA_RUNTIME_LOCK:
+        _, write_deltalake = get_delta_runtime()
+        write_deltalake(
+            table_uri,
+            frame.to_arrow(),
+            mode='append',
+            schema_mode='merge',
+            engine='rust',
+            storage_options=storage_options,
+        )
+
+
+def _merge_control_delta(table_uri: str, frame: pl.DataFrame, storage_options: dict[str, str] | None) -> None:
+    DeltaTable, write_deltalake = get_delta_runtime()
+    try:
+        existing_table = DeltaTable(table_uri, storage_options=storage_options)
+    except Exception:
+        existing_table = None
+
+    if existing_table is None:
+        write_deltalake(
+            table_uri,
+            frame.to_arrow(),
+            mode='overwrite',
+            schema_mode='merge',
+            engine='rust',
+            storage_options=storage_options,
+        )
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    events_df.write_parquet(path)
+
+    merge_predicate = _control_merge_predicate(frame.columns)
+    change_predicate = _control_change_predicate(frame.columns)
+    merge_builder = existing_table.merge(
+        source=frame.to_arrow(),
+        predicate=merge_predicate,
+        source_alias='source',
+        target_alias='target',
+    )
+    if change_predicate:
+        merge_builder = merge_builder.when_matched_update_all(
+            predicate=change_predicate
+        )
+    merge_builder.when_not_matched_insert_all().execute()
 
 
 def _build_control_filter_expr(
@@ -314,9 +346,6 @@ def _read_remote_control_state(
 
 def read_control_table() -> pl.DataFrame:
     with CONTROL_STATE_LOCK, _get_lock("control_table"):
-        settings = get_settings()
-        table_uri = _control_uri()
-        storage_options = settings.delta_storage_options
         local_state = _read_local_control_state()
         pending_state = _read_pending_control_state()
 
@@ -409,38 +438,10 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
 
         try:
             with DELTA_RUNTIME_LOCK:
-                DeltaTable, write_deltalake = get_delta_runtime()
                 sync_df = _merge_control_frames(pending_state, incoming_df)
                 if sync_df.is_empty():
                     return table_uri
-                try:
-                    existing_table = DeltaTable(table_uri, storage_options=storage_options)
-                except Exception:
-                    existing_table = None
-
-                if existing_table is None:
-                    write_deltalake(
-                        table_uri,
-                        sync_df.to_arrow(),
-                        mode='overwrite',
-                        schema_mode='merge',
-                        engine='rust',
-                        storage_options=storage_options,
-                    )
-                else:
-                    merge_predicate = _control_merge_predicate(sync_df.columns)
-                    change_predicate = _control_change_predicate(sync_df.columns)
-                    merge_builder = existing_table.merge(
-                        source=sync_df.to_arrow(),
-                        predicate=merge_predicate,
-                        source_alias='source',
-                        target_alias='target',
-                    )
-                    if change_predicate:
-                        merge_builder = merge_builder.when_matched_update_all(
-                            predicate=change_predicate
-                        )
-                    merge_builder.when_not_matched_insert_all().execute()
+                _merge_control_delta(table_uri, sync_df, storage_options)
             _write_pending_control_state(pl.DataFrame())
             _write_local_control_state(merged_local_state)
             return table_uri
@@ -488,16 +489,7 @@ def append_control_events(events_df: pl.DataFrame) -> str:
         if not settings.is_minio:
             try:
                 Path(events_uri).mkdir(parents=True, exist_ok=True)
-                with DELTA_RUNTIME_LOCK:
-                    _, write_deltalake = get_delta_runtime()
-                    write_deltalake(
-                        events_uri,
-                        events_to_sync.to_arrow(),
-                        mode='append',
-                        schema_mode='merge',
-                        engine='rust',
-                        storage_options=settings.delta_storage_options,
-                    )
+                _append_delta_records(events_uri, events_to_sync, settings.delta_storage_options)
                 _write_pending_control_events(pl.DataFrame())
                 return events_uri
             except Exception:
@@ -506,16 +498,7 @@ def append_control_events(events_df: pl.DataFrame) -> str:
                 return str(_pending_control_events_path())
 
         try:
-            with DELTA_RUNTIME_LOCK:
-                _, write_deltalake = get_delta_runtime()
-                write_deltalake(
-                    events_uri,
-                    events_to_sync.to_arrow(),
-                    mode='append',
-                    schema_mode='merge',
-                    engine='rust',
-                    storage_options=settings.delta_storage_options,
-                )
+            _append_delta_records(events_uri, events_to_sync, settings.delta_storage_options)
             _write_pending_control_events(pl.DataFrame())
             return events_uri
         except Exception:
