@@ -150,7 +150,12 @@ def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object
     persist_control_states(control_states)
 
 
-def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
+def run_full(
+    mercado_nombre: str | None = None,
+    procedencia_nombre: str | None = None,
+    *,
+    finalize_delta: bool = True,
+) -> Path:
     settings = get_settings()
     
     # Si el mercado es '*', forzamos procedencia=None para reporte consolidado
@@ -163,7 +168,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
 
     plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre'] if procedencia else None), settings.sisap_max_queries)
     if not plan:
-        if settings.delta_enabled and has_staged_delta_output('precios_diarios_mercado_lima'):
+        if finalize_delta and settings.delta_enabled and has_staged_delta_output('precios_diarios_mercado_lima'):
             finalize_staged_delta_output(
                 output_name='precios_diarios_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
@@ -339,7 +344,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and staging_run_id:
         finalize_staged_delta_output(
             output_name='precios_diarios_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,

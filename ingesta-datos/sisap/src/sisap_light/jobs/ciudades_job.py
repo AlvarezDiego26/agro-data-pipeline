@@ -249,12 +249,17 @@ def run_sample(modulo: ModuloSisap) -> Path:
     return output
 
 
-def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
+def run_full(
+    modulo: ModuloSisap,
+    region_nombre: str | None = None,
+    *,
+    finalize_delta: bool = True,
+) -> Path:
     settings = get_settings()
     region = _resolve_region(region_nombre)
     plan = filter_plan(_build_raw_plan(modulo, region['nombre']), settings.sisap_max_queries)
     if not plan:
-        if settings.delta_enabled and has_staged_delta_output(_output_name(modulo)):
+        if finalize_delta and settings.delta_enabled and has_staged_delta_output(_output_name(modulo)):
             finalize_staged_delta_output(
                 output_name=_output_name(modulo),
                 expected_columns=_expected_columns(modulo),
@@ -416,7 +421,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and staging_run_id:
         finalize_staged_delta_output(
             output_name=output_name,
             expected_columns=_expected_columns(modulo),

@@ -8,9 +8,20 @@ from typing import Callable
 from loguru import logger
 
 from sisap_light.config import get_settings
-from sisap_light.jobs.ciudades_job import run_full as run_ciudades_full
-from sisap_light.jobs.precios_job import run_full as run_precios_full
-from sisap_light.jobs.volumen_job import run_full as run_volumen_full
+from sisap_light.jobs.ciudades_job import (
+    _expected_columns as ciudades_expected_columns,
+    _output_name as ciudades_output_name,
+    run_full as run_ciudades_full,
+)
+from sisap_light.jobs.common import finalize_staged_delta_output, has_staged_delta_output
+from sisap_light.jobs.precios_job import (
+    EXPECTED_COLUMNS as PRECIOS_EXPECTED_COLUMNS,
+    run_full as run_precios_full,
+)
+from sisap_light.jobs.volumen_job import (
+    EXPECTED_COLUMNS as VOLUMEN_EXPECTED_COLUMNS,
+    run_full as run_volumen_full,
+)
 from sisap_light.procesamiento.storage.control import (
     get_control_sync_status,
     sync_pending_control_events,
@@ -25,33 +36,96 @@ class ModuleRunSpec:
     scope_name: str
     iter_values_getter: Callable[[], list[str]]
     scope_attr: str
-    runner: Callable[[str], str]
+    runner: Callable[[str, bool], str]
 
 
-def _run_volumen(_: str) -> str:
-    return str(run_volumen_full(procedencia_nombre=_))
+def _run_volumen(_: str, finalize_delta: bool = True) -> str:
+    return str(run_volumen_full(procedencia_nombre=_, finalize_delta=finalize_delta))
 
 
-def _run_precios(_: str) -> str:
-    return str(run_precios_full(procedencia_nombre=_))
+def _run_precios(_: str, finalize_delta: bool = True) -> str:
+    return str(run_precios_full(procedencia_nombre=_, finalize_delta=finalize_delta))
 
 
-def _run_ciudades_mayoristas(_: str) -> str:
-    return str(run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS, region_nombre=_))
+def _run_ciudades_mayoristas(_: str, finalize_delta: bool = True) -> str:
+    return str(
+        run_ciudades_full(
+            ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS,
+            region_nombre=_,
+            finalize_delta=finalize_delta,
+        )
+    )
 
 
-def _run_ciudades_minoristas(_: str) -> str:
-    return str(run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS, region_nombre=_))
+def _run_ciudades_minoristas(_: str, finalize_delta: bool = True) -> str:
+    return str(
+        run_ciudades_full(
+            ModuloSisap.CIUDADES_PRECIOS_MINORISTAS,
+            region_nombre=_,
+            finalize_delta=finalize_delta,
+        )
+    )
 
 
-def _run_regiones(_: str) -> str:
+def _run_regiones(_: str, finalize_delta: bool = True) -> str:
     mayoristas = str(
-        run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS, region_nombre=_)
+        run_ciudades_full(
+            ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS,
+            region_nombre=_,
+            finalize_delta=finalize_delta,
+        )
     )
     minoristas = str(
-        run_ciudades_full(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS, region_nombre=_)
+        run_ciudades_full(
+            ModuloSisap.CIUDADES_PRECIOS_MINORISTAS,
+            region_nombre=_,
+            finalize_delta=finalize_delta,
+        )
     )
     return f'mayoristas -> {mayoristas} | minoristas -> {minoristas}'
+
+
+def _finalize_module_delta_outputs(modulo: str) -> None:
+    if modulo == 'volumen' and has_staged_delta_output('volumen_diario_mercado_lima'):
+        finalize_staged_delta_output(
+            output_name='volumen_diario_mercado_lima',
+            expected_columns=VOLUMEN_EXPECTED_COLUMNS,
+            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+        )
+    elif modulo == 'precios' and has_staged_delta_output('precios_diarios_mercado_lima'):
+        finalize_staged_delta_output(
+            output_name='precios_diarios_mercado_lima',
+            expected_columns=PRECIOS_EXPECTED_COLUMNS,
+            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+        )
+    elif modulo == 'ciudades-mayoristas':
+        output_name = ciudades_output_name(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS)
+        if has_staged_delta_output(output_name):
+            finalize_staged_delta_output(
+                output_name=output_name,
+                expected_columns=ciudades_expected_columns(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS),
+                sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+            )
+    elif modulo == 'ciudades-minoristas':
+        output_name = ciudades_output_name(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS)
+        if has_staged_delta_output(output_name):
+            finalize_staged_delta_output(
+                output_name=output_name,
+                expected_columns=ciudades_expected_columns(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS),
+                sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+            )
+    elif modulo == 'regiones':
+        for ciudades_modulo in (
+            ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS,
+            ModuloSisap.CIUDADES_PRECIOS_MINORISTAS,
+        ):
+            output_name = ciudades_output_name(ciudades_modulo)
+            if has_staged_delta_output(output_name):
+                finalize_staged_delta_output(
+                    output_name=output_name,
+                    expected_columns=ciudades_expected_columns(ciudades_modulo),
+                    sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                )
 
 
 def _module_specs() -> dict[str, ModuleRunSpec]:
@@ -125,9 +199,17 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> t
     if not scope_values:
         return [], []
 
+    use_parallel_scopes = (
+        settings.delta_enabled
+        and settings.parallel_enabled
+        and settings.scope_max_workers > 1
+        and len(scope_values) > 1
+    )
+    finalize_delta_per_scope = not use_parallel_scopes
+
     def run_scope(scope_value: str) -> str:
         logger.info('Ejecutando {} para {}={}', modulo, spec.scope_name, scope_value)
-        output = spec.runner(scope_value)
+        output = spec.runner(scope_value, finalize_delta=finalize_delta_per_scope)
         if pause_seconds:
             time.sleep(pause_seconds)
         return f'{modulo} [{spec.scope_name}={scope_value}] -> {output}'
@@ -172,6 +254,8 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> t
                 error_message = f'{modulo} [{spec.scope_name}={scope_value}] -> ERROR: {exc}'
                 resultados.append(error_message)
                 errores.append(error_message)
+    if use_parallel_scopes:
+        _finalize_module_delta_outputs(modulo)
     return resultados, errores
 
 

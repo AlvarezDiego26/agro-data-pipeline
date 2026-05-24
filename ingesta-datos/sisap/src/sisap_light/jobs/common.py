@@ -441,7 +441,13 @@ def _merge_date_bounds(rows: list[tuple[date | None, date | None]]) -> tuple[dat
     return (min(mins) if mins else None, max(maxs) if maxs else None)
 
 
-def _get_staged_delta_date_bounds(output_name: str) -> tuple[date | None, date | None]:
+def _get_staged_delta_date_bounds(
+    output_name: str,
+    scope_label: str,
+    scope_value: str,
+    producto_codigo: str,
+    mercado_codigo: str | None,
+) -> tuple[date | None, date | None]:
     staged_files = _list_staged_delta_files(output_name)
     if not staged_files:
         return None, None
@@ -450,7 +456,18 @@ def _get_staged_delta_date_bounds(output_name: str) -> tuple[date | None, date |
     maxima: date | None = None
     for staged_file in staged_files:
         try:
-            fecha_df = pl.read_parquet(staged_file, columns=['fecha']).drop_nulls()
+            fecha_df = pl.read_parquet(staged_file).filter(
+                (pl.col('producto_codigo') == producto_codigo)
+            )
+            if scope_label == 'procedencia' and 'procedencia' in fecha_df.columns:
+                fecha_df = fecha_df.filter(pl.col('procedencia') == scope_value)
+            elif scope_label == 'region' and 'region' in fecha_df.columns:
+                fecha_df = fecha_df.filter(pl.col('region') == scope_value)
+            elif scope_label == 'volumen_mercado' and 'mercado_codigo' in fecha_df.columns:
+                fecha_df = fecha_df.filter(pl.col('mercado_codigo') == scope_value)
+            if mercado_codigo and 'mercado_codigo' in fecha_df.columns:
+                fecha_df = fecha_df.filter(pl.col('mercado_codigo') == mercado_codigo)
+            fecha_df = fecha_df.select('fecha').drop_nulls()
             if fecha_df.is_empty():
                 continue
             current_min = fecha_df.get_column('fecha').min()
@@ -481,7 +498,13 @@ def get_loaded_date_bounds(
             producto_codigo,
             mercado_codigo,
         )
-        staged_bounds = _get_staged_delta_date_bounds(output_name)
+        staged_bounds = _get_staged_delta_date_bounds(
+            output_name,
+            scope_label,
+            scope_value,
+            producto_codigo,
+            mercado_codigo,
+        )
         return _merge_date_bounds([committed_bounds, staged_bounds])
 
     dataset_name = build_dataset_name(output_name, scope_label, scope_value, producto_nombre)
@@ -1152,7 +1175,7 @@ def finalize_staged_delta_output(
         expected_columns,
         sort_columns,
     )
-    result = save_delta_table(final_df, output_name, ['fecha_particion'])
+    result = save_delta_table(final_df, output_name, ['anio', 'mes'])
     shutil.rmtree(staging_root, ignore_errors=True)
     return result
 
@@ -1197,7 +1220,7 @@ def flush_accumulated_partitioned_output(
                     final_df.height,
                 )
             else:
-                save_delta_table(final_df, output_name, ['fecha_particion'])
+                save_delta_table(final_df, output_name, ['anio', 'mes'])
         accumulated_frames.clear()
         return
 
@@ -1233,7 +1256,7 @@ def append_partitioned_output(
     settings = get_settings()
 
     if settings.delta_enabled:
-        save_delta_table(final_df, output_name, ['fecha_particion'])
+        save_delta_table(final_df, output_name, ['anio', 'mes'])
         scope_output = build_scope_output_dir(output_name, scope_label, scope_value)
         scope_output.mkdir(parents=True, exist_ok=True)
         return scope_output

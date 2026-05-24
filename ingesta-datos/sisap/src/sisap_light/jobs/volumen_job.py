@@ -191,7 +191,12 @@ def run_sample() -> Path:
     return output
 
 
-def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
+def run_full(
+    mercado_nombre: str | None = None,
+    procedencia_nombre: str | None = None,
+    *,
+    finalize_delta: bool = True,
+) -> Path:
     settings = get_settings()
     if settings.sisap_mercado_codigo == '*':
         procedencia_nombre = None
@@ -200,7 +205,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     scope_value = procedencia_nombre or 'consolidado'
     scope_label = 'procedencia' if procedencia_nombre else 'volumen_mercado'
     if not plan:
-        if settings.delta_enabled and has_staged_delta_output('volumen_diario_mercado_lima'):
+        if finalize_delta and settings.delta_enabled and has_staged_delta_output('volumen_diario_mercado_lima'):
             finalize_staged_delta_output(
                 output_name='volumen_diario_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
@@ -381,7 +386,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and staging_run_id:
         finalize_staged_delta_output(
             output_name='volumen_diario_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,

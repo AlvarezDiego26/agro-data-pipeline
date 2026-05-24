@@ -101,7 +101,10 @@ class Settings(BaseSettings):
 
     @property
     def delta_staging_dir(self) -> Path:
-        return self.data_dir / 'delta_staging'
+        namespace = _slug_path_token(
+            f'{self.storage_backend}|{self.minio_prefix}'
+        )
+        return self.data_dir / 'delta_staging' / namespace
 
     @property
     def raw_html_dir(self) -> Path:
