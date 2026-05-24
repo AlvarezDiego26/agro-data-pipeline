@@ -9,10 +9,12 @@ from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_delta_staging_run_id,
     build_historical_zero_frame,
     build_control_event_row,
     build_scope_output_dir,
     expand_mayorista_plan_for_procedencia,
+    finalize_staged_delta_output,
     filter_plan,
     flush_accumulated_partitioned_output,
     init_control_states,
@@ -213,6 +215,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     errores: list[dict[str, str]] = []
     output = build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
+    staging_run_id = build_delta_staging_run_id('volumen_diario_mercado_lima') if settings.delta_enabled else None
 
     shards = build_grouped_shards(
         plan,
@@ -277,7 +280,14 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                             accumulated_frames.setdefault((sl, sv), []).append(zero_df)
                             pending_output_frames += 1
                             if pending_output_frames >= OUTPUT_FLUSH_EVERY:
-                                _flush_accumulated_frames(accumulated_frames)
+                                flush_accumulated_partitioned_output(
+                                    accumulated_frames,
+                                    output_name='volumen_diario_mercado_lima',
+                                    expected_columns=EXPECTED_COLUMNS,
+                                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                                    staging_run_id=staging_run_id,
+                                    shard_id=shard.shard_id,
+                                )
                                 pending_output_frames = 0
                         register_control_success(
                             control_states,
@@ -306,7 +316,14 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                     accumulated_frames.setdefault((sl, sv), []).append(df)
                     pending_output_frames += 1
                     if pending_output_frames >= OUTPUT_FLUSH_EVERY:
-                        _flush_accumulated_frames(accumulated_frames)
+                        flush_accumulated_partitioned_output(
+                            accumulated_frames,
+                            output_name='volumen_diario_mercado_lima',
+                            expected_columns=EXPECTED_COLUMNS,
+                            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                            staging_run_id=staging_run_id,
+                            shard_id=shard.shard_id,
+                        )
                         pending_output_frames = 0
                     register_control_success(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query)
                     event_row = build_control_event_row(
@@ -343,7 +360,14 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                             'motivo': str(exc),
                         }
                     )
-            _flush_accumulated_frames(accumulated_frames)
+            flush_accumulated_partitioned_output(
+                accumulated_frames,
+                output_name='volumen_diario_mercado_lima',
+                expected_columns=EXPECTED_COLUMNS,
+                sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                staging_run_id=staging_run_id,
+                shard_id=shard.shard_id,
+            )
             _flush_control_batch(control_states, pending_event_rows)
         finally:
             extractor.close()
@@ -359,6 +383,14 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
+
+    if settings.delta_enabled and staging_run_id:
+        finalize_staged_delta_output(
+            output_name='volumen_diario_mercado_lima',
+            expected_columns=EXPECTED_COLUMNS,
+            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            staging_run_id=staging_run_id,
+        )
 
     if errores:
         error_path = output / 'errores.csv'

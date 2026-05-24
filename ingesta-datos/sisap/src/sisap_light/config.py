@@ -91,6 +91,10 @@ class Settings(BaseSettings):
         return self.data_dir / 'clean_delta'
 
     @property
+    def delta_staging_dir(self) -> Path:
+        return self.data_dir / 'delta_staging'
+
+    @property
     def raw_html_dir(self) -> Path:
         return self.raw_dir / 'html'
 
@@ -255,4 +259,5 @@ def get_settings() -> Settings:
         settings.raw_html_dir.mkdir(parents=True, exist_ok=True)
     if not settings.is_minio:
         settings.clean_delta_dir.mkdir(parents=True, exist_ok=True)
+    settings.delta_staging_dir.mkdir(parents=True, exist_ok=True)
     return settings

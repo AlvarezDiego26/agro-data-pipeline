@@ -4,6 +4,8 @@ from sisap_light.schemas import ModuloSisap
 from datetime import date, timedelta
 import unicodedata
 from pathlib import Path
+import shutil
+from uuid import uuid4
 
 import polars as pl
 from loguru import logger
@@ -17,6 +19,7 @@ from sisap_light.procesamiento.storage.control import (
     build_control_event_id,
     build_control_record_timestamp,
     get_control_status,
+    read_control_table,
     upsert_control_records,
 )
 from sisap_light.procesamiento.storage.delta import save_delta_table
@@ -27,6 +30,7 @@ from sisap_light.procesamiento.storage.merge import business_key_columns
 
 _CONTROL_STATUS_CACHE: dict[tuple[str, str, str, str, str, str, str], dict[str, object] | None] = {}
 _CONTROL_READ_DISABLED = False
+_CONTROL_TABLE_SNAPSHOT: pl.DataFrame | None = None
 _LEGACY_VOLUMEN_BOUNDS_CACHE: dict[str, tuple[date | None, date | None]] = {}
 
 
@@ -56,15 +60,27 @@ def _get_cached_control_status(
     cache_key = ('sisap', control_modulo, output_name, scope_label, scope_value, mc, producto_codigo)
     if cache_key not in _CONTROL_STATUS_CACHE:
         try:
-            _CONTROL_STATUS_CACHE[cache_key] = get_control_status(
-                fuente='sisap',
-                modulo=control_modulo,
-                dataset=output_name,
-                scope_tipo=scope_label,
-                scope_valor=scope_value,
-                producto_codigo=producto_codigo,
-                mercado_codigo=mc,
-            )
+            snapshot = _get_control_table_snapshot()
+            if snapshot is not None:
+                _CONTROL_STATUS_CACHE[cache_key] = _filter_cached_control_status(
+                    snapshot,
+                    control_modulo=control_modulo,
+                    output_name=output_name,
+                    scope_label=scope_label,
+                    scope_value=scope_value,
+                    producto_codigo=producto_codigo,
+                    mercado_codigo=mc,
+                )
+            else:
+                _CONTROL_STATUS_CACHE[cache_key] = get_control_status(
+                    fuente='sisap',
+                    modulo=control_modulo,
+                    dataset=output_name,
+                    scope_tipo=scope_label,
+                    scope_valor=scope_value,
+                    producto_codigo=producto_codigo,
+                    mercado_codigo=mc,
+                )
         except TimeoutError:
             _CONTROL_READ_DISABLED = True
             _CONTROL_STATUS_CACHE[cache_key] = None
@@ -73,6 +89,55 @@ def _get_cached_control_status(
                 'se continuara usando la ultima fecha detectada en los datos escritos.'
             )
     return _CONTROL_STATUS_CACHE[cache_key]
+
+
+def _get_control_table_snapshot() -> pl.DataFrame | None:
+    global _CONTROL_READ_DISABLED, _CONTROL_TABLE_SNAPSHOT
+
+    settings = get_settings()
+    if not settings.sisap_use_control_table or _CONTROL_READ_DISABLED:
+        return None
+
+    if _CONTROL_TABLE_SNAPSHOT is None:
+        try:
+            _CONTROL_TABLE_SNAPSHOT = read_control_table()
+        except TimeoutError:
+            _CONTROL_READ_DISABLED = True
+            logger.warning(
+                'Se deshabilita la lectura completa de tabla de control para esta corrida; '
+                'se continuara usando la ultima fecha detectada en los datos escritos.'
+            )
+            return None
+    return _CONTROL_TABLE_SNAPSHOT
+
+
+def _filter_cached_control_status(
+    snapshot: pl.DataFrame,
+    *,
+    control_modulo: str,
+    output_name: str,
+    scope_label: str,
+    scope_value: str,
+    producto_codigo: str,
+    mercado_codigo: str,
+) -> dict[str, object] | None:
+    if snapshot.is_empty():
+        return None
+
+    filtered = snapshot.filter(
+        (pl.col('fuente') == 'sisap')
+        & (pl.col('modulo') == control_modulo)
+        & (pl.col('dataset') == output_name)
+        & (pl.col('scope_tipo') == scope_label)
+        & (pl.col('scope_valor') == scope_value)
+        & (pl.col('producto_codigo') == producto_codigo)
+        & (pl.col('mercado_codigo').fill_null('') == mercado_codigo)
+    )
+    if filtered.is_empty():
+        return None
+
+    latest = filtered.sort('fecha_actualizacion').tail(1).to_dicts()
+    return latest[0] if latest else None
 
 
 def normalize_text(value: str | None) -> str:
@@ -267,6 +332,15 @@ def build_scope_output_dir(output_name: str, scope_label: str, scope_value: str)
     return settings.clean_dir / output_name / build_scope_folder(scope_label, scope_value)
 
 
+def build_delta_staging_run_id(output_name: str) -> str:
+    return f'{slugify(output_name)}-{uuid4().hex}'
+
+
+def build_delta_staging_dir(output_name: str, run_id: str) -> Path:
+    settings = get_settings()
+    return settings.delta_staging_dir / slugify(output_name) / run_id
+
+
 def _get_delta_date_bounds(dataset_name: str) -> tuple[date | None, date | None]:
     settings = get_settings()
     try:
@@ -394,6 +468,7 @@ def resolve_query_dates(
     control_min_loaded: date | None = None
     control_max_loaded: date | None = None
     history_complete = False
+    latest_control_status: str | None = None
     if settings.sisap_use_control_table and not _CONTROL_READ_DISABLED:
         control_state = _get_cached_control_status(
             control_modulo,
@@ -405,6 +480,7 @@ def resolve_query_dates(
         )
         if control_state:
             history_complete = bool(control_state.get('historico_completo'))
+            latest_control_status = str(control_state.get('estado') or '').strip().lower() or None
             control_last_loaded = control_state.get('ultima_fecha_exitosa')
             control_min_loaded = control_state.get('fecha_minima_exitosa')
             control_max_loaded = control_state.get('fecha_maxima_exitosa')
@@ -482,7 +558,24 @@ def resolve_query_dates(
             min_loaded,
         )
 
-    if settings.sisap_incremental_overlap_dias > 0:
+    today = date.today()
+    should_retry_recent_empty = (
+        latest_control_status == 'empty'
+        and last_loaded is not None
+        and last_loaded >= (today - timedelta(days=1))
+    )
+
+    if should_retry_recent_empty:
+        next_start = max(last_loaded, fecha_inicio)
+        logger.info(
+            'Se reintentara la ventana reciente vacia para {} {} producto={} desde {} '
+            'porque la ultima corrida vacia corresponde a fecha actual o dia anterior.',
+            output_name,
+            scope_value,
+            producto_codigo,
+            next_start,
+        )
+    elif settings.sisap_incremental_overlap_dias > 0:
         next_start = last_loaded - timedelta(days=settings.sisap_incremental_overlap_dias)
         next_start = max(next_start, fecha_inicio)
     else:
@@ -950,12 +1043,64 @@ def _prepare_partitioned_output_frame(
     )
 
 
+def _write_delta_staging_file(
+    final_df: pl.DataFrame,
+    *,
+    output_name: str,
+    staging_run_id: str,
+    shard_id: str | None,
+) -> Path:
+    staging_dir = build_delta_staging_dir(output_name, staging_run_id)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    file_prefix = slugify(shard_id) if shard_id else 'flush'
+    file_path = staging_dir / f'{file_prefix}-{uuid4().hex}.parquet'
+    final_df.write_parquet(file_path)
+    return file_path
+
+
+def finalize_staged_delta_output(
+    *,
+    output_name: str,
+    expected_columns: list[str],
+    sort_columns: list[str],
+    staging_run_id: str,
+) -> str:
+    staging_dir = build_delta_staging_dir(output_name, staging_run_id)
+    if not staging_dir.exists():
+        logger.info('No hubo archivos staged para {} en {}', output_name, staging_dir)
+        return ''
+
+    staged_files = sorted(staging_dir.rglob('*.parquet'))
+    if not staged_files:
+        logger.info('No hubo archivos parquet staged para {} en {}', output_name, staging_dir)
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        return ''
+
+    logger.info(
+        'Consolidando {} archivos staged hacia Delta final para {}',
+        len(staged_files),
+        output_name,
+    )
+    final_df = _prepare_partitioned_output_frame(
+        [pl.read_parquet(path) for path in staged_files],
+        output_name,
+        expected_columns,
+        sort_columns,
+    )
+    try:
+        return save_delta_table(final_df, output_name, ['fecha_particion'])
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def flush_accumulated_partitioned_output(
     accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]],
     *,
     output_name: str,
     expected_columns: list[str],
     sort_columns: list[str],
+    staging_run_id: str | None = None,
+    shard_id: str | None = None,
 ) -> None:
     if not accumulated_frames:
         return
@@ -974,7 +1119,21 @@ def flush_accumulated_partitioned_output(
                 expected_columns,
                 sort_columns,
             )
-            save_delta_table(final_df, output_name, ['fecha_particion'])
+            if staging_run_id:
+                staged_file = _write_delta_staging_file(
+                    final_df,
+                    output_name=output_name,
+                    staging_run_id=staging_run_id,
+                    shard_id=shard_id,
+                )
+                logger.debug(
+                    'Se escribio staging Delta para {} en {} ({} filas)',
+                    output_name,
+                    staged_file,
+                    final_df.height,
+                )
+            else:
+                save_delta_table(final_df, output_name, ['fecha_particion'])
         accumulated_frames.clear()
         return
 

@@ -9,9 +9,11 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_ciudades import SisapCiudadesExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_delta_staging_run_id,
     build_historical_zero_frame,
     build_control_event_row,
     build_scope_output_dir,
+    finalize_staged_delta_output,
     filter_plan,
     flush_accumulated_partitioned_output,
     init_control_states,
@@ -259,6 +261,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     output_name = _output_name(modulo)
     output = build_scope_output_dir(output_name, 'region', region['nombre'])
     output.mkdir(parents=True, exist_ok=True)
+    staging_run_id = build_delta_staging_run_id(output_name) if settings.delta_enabled else None
 
     shards = build_grouped_shards(
         plan,
@@ -326,6 +329,8 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                                     output_name=output_name,
                                     expected_columns=_expected_columns(modulo),
                                     sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                                    staging_run_id=staging_run_id,
+                                    shard_id=shard.shard_id,
                                 )
                                 pending_output_frames = 0
                         register_control_success(
@@ -386,6 +391,8 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                 output_name=output_name,
                 expected_columns=_expected_columns(modulo),
                 sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                staging_run_id=staging_run_id,
+                shard_id=shard.shard_id,
             )
             _flush_control_batch(control_states, pending_event_rows)
         finally:
@@ -402,6 +409,14 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
+
+    if settings.delta_enabled and staging_run_id:
+        finalize_staged_delta_output(
+            output_name=output_name,
+            expected_columns=_expected_columns(modulo),
+            sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+            staging_run_id=staging_run_id,
+        )
 
     if errores:
         error_path = output / 'errores.csv'
