@@ -8,6 +8,7 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_historical_zero_frame,
     build_control_event_row,
     build_scope_output_dir,
     expand_mayorista_plan_for_procedencia,
@@ -227,6 +228,16 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                                 'El HTML de precios parece incluir tablas y fechas; si el portal muestra datos, '
                                 'revisar build_precio_metric_frame / detect_primary_table vs estructura actual del portal.'
                             )
+                        zero_df = build_historical_zero_frame(
+                            'precios_diarios_mercado_lima',
+                            query,
+                        )
+                        if not zero_df.is_empty():
+                            accumulated_frames.setdefault((scope_label, scope_value), []).append(zero_df)
+                            pending_output_frames += 1
+                            if pending_output_frames >= OUTPUT_FLUSH_EVERY:
+                                _flush_accumulated_frames(accumulated_frames)
+                                pending_output_frames = 0
                         register_control_success(
                             control_states,
                             'precios',

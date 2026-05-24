@@ -9,6 +9,7 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_ciudades import SisapCiudadesExtractor
 from sisap_light.jobs.common import (
     append_partitioned_output,
+    build_historical_zero_frame,
     build_control_event_row,
     build_scope_output_dir,
     filter_plan,
@@ -67,6 +68,7 @@ EXPECTED_COLUMNS_MIN = [
 ]
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = 20
+OUTPUT_FLUSH_EVERY = 20
 
 
 def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
@@ -273,6 +275,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         control_states = init_control_states()
         pending_event_rows: list[dict[str, object]] = []
         accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
+        pending_output_frames = 0
         try:
             for idx, query in enumerate(shard.items, start=1):
                 logger.info(
@@ -309,6 +312,22 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                                 'El HTML de ciudades parece incluir tablas y fechas; si el portal muestra datos, '
                                 'revisar build_ciudades_metric_frame vs HTML actual.'
                             )
+                        zero_df = build_historical_zero_frame(
+                            output_name,
+                            query,
+                            tipo_mercado=_tipo_mercado(modulo),
+                        )
+                        if not zero_df.is_empty():
+                            accumulated_frames.setdefault(('region', region['nombre']), []).append(zero_df)
+                            pending_output_frames += 1
+                            if pending_output_frames >= OUTPUT_FLUSH_EVERY:
+                                flush_accumulated_partitioned_output(
+                                    accumulated_frames,
+                                    output_name=output_name,
+                                    expected_columns=_expected_columns(modulo),
+                                    sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                                )
+                                pending_output_frames = 0
                         register_control_success(
                             control_states,
                             output_name,

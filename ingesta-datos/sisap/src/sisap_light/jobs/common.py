@@ -830,6 +830,105 @@ def persist_control_events_batch(event_rows: list[dict[str, object]]) -> str:
     return append_control_events(pl.DataFrame(event_rows))
 
 
+def should_materialize_historical_zero(query) -> bool:
+    return query.fecha_fin < date.today()
+
+
+def _build_query_dates(query) -> list[date]:
+    total_days = (query.fecha_fin - query.fecha_inicio).days
+    return [query.fecha_inicio + timedelta(days=offset) for offset in range(total_days + 1)]
+
+
+def _build_historical_zero_frame_volumen(query) -> pl.DataFrame:
+    fechas = _build_query_dates(query)
+    procedencia = query.procedencia_nombre or 'Consolidado'
+    rows = [
+        {
+            'fecha': fecha,
+            'producto_codigo': query.producto_codigo,
+            'producto_nombre': query.producto_nombre,
+            'variedad': query.producto_nombre,
+            'procedencia': procedencia,
+            'volumen_ton': 0.0,
+            'procedencia_filtro_codigo': query.procedencia_codigo,
+            'procedencia_filtro_nombre': query.procedencia_nombre,
+            'mercado_codigo': query.mercado_codigo,
+            'mercado_nombre': query.mercado_nombre,
+            'fecha_inicio_consulta': query.fecha_inicio,
+            'fecha_fin_consulta': query.fecha_fin,
+        }
+        for fecha in fechas
+    ]
+    return pl.DataFrame(rows)
+
+
+def _build_historical_zero_frame_precios(query) -> pl.DataFrame:
+    fechas = _build_query_dates(query)
+    procedencia = query.procedencia_nombre or 'TODOS'
+    rows = [
+        {
+            'fecha': fecha,
+            'producto_codigo': query.producto_codigo,
+            'producto_nombre': query.producto_nombre,
+            'variedad': query.producto_nombre,
+            'procedencia': procedencia,
+            'procedencia_filtro_codigo': query.procedencia_codigo or '000000',
+            'procedencia_filtro_nombre': query.procedencia_nombre or 'TODOS',
+            'mercado_codigo': query.mercado_codigo or '',
+            'mercado_nombre': query.mercado_nombre or '',
+            'fecha_inicio_consulta': query.fecha_inicio.isoformat(),
+            'fecha_fin_consulta': query.fecha_fin.isoformat(),
+            'precio_min': 0.0,
+            'precio_prom': 0.0,
+            'precio_max': 0.0,
+        }
+        for fecha in fechas
+    ]
+    return pl.DataFrame(rows)
+
+
+def _build_historical_zero_frame_ciudades(query, tipo_mercado: str) -> pl.DataFrame:
+    fechas = _build_query_dates(query)
+    rows = [
+        {
+            'fecha': fecha,
+            'tipo_mercado': tipo_mercado,
+            'region': query.region_nombre or '',
+            'ciudad': query.region_nombre or 'Varios',
+            'producto_codigo': query.producto_codigo,
+            'producto_nombre': query.producto_nombre,
+            'variedad': query.producto_nombre,
+            'unidad_medida': '',
+            'equiv_kg_lt': 0.0,
+            'precio_min': 0.0,
+            'precio_prom': 0.0,
+            'precio_max': 0.0,
+        }
+        for fecha in fechas
+    ]
+    return pl.DataFrame(rows)
+
+
+def build_historical_zero_frame(
+    output_name: str,
+    query,
+    *,
+    tipo_mercado: str | None = None,
+) -> pl.DataFrame:
+    if not should_materialize_historical_zero(query):
+        return pl.DataFrame()
+
+    if output_name == 'volumen_diario_mercado_lima':
+        return _build_historical_zero_frame_volumen(query)
+    if output_name == 'precios_diarios_mercado_lima':
+        return _build_historical_zero_frame_precios(query)
+    if output_name == 'precio_diario_regiones':
+        if tipo_mercado is None:
+            raise ValueError('tipo_mercado es requerido para normalizar vacios de ciudades.')
+        return _build_historical_zero_frame_ciudades(query, tipo_mercado)
+    raise ValueError(f'No existe normalizacion historica de vacios para {output_name}.')
+
+
 def _prepare_partitioned_output_frame(
     frames: list[pl.DataFrame],
     output_name: str,
