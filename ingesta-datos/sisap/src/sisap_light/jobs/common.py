@@ -1129,7 +1129,6 @@ def finalize_staged_delta_output(
     output_name: str,
     expected_columns: list[str],
     sort_columns: list[str],
-    staging_run_id: str,
 ) -> str:
     staging_root = _build_delta_staging_root(output_name)
     if not staging_root.exists():

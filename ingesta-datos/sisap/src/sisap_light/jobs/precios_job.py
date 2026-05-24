@@ -7,7 +7,6 @@ from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
-    append_partitioned_output,
     build_delta_staging_run_id,
     build_historical_zero_frame,
     build_control_event_row,
@@ -25,7 +24,6 @@ from sisap_light.jobs.common import (
     register_control_query,
     register_control_success,
     resolve_item,
-    resolve_query_dates,
 )
 from sisap_light.jobs.parallel import build_grouped_shards, run_shards
 from sisap_light.procesamiento.parsers.html_tables import extract_report_titles, detect_primary_table, quick_html_data_signals
@@ -152,15 +150,6 @@ def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object
     persist_control_states(control_states)
 
 
-def _flush_accumulated_frames(accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]]) -> None:
-    flush_accumulated_partitioned_output(
-        accumulated_frames,
-        output_name='precios_diarios_mercado_lima',
-        expected_columns=EXPECTED_COLUMNS,
-        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-    )
-
-
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:
     settings = get_settings()
     
@@ -179,7 +168,6 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 output_name='precios_diarios_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
                 sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                staging_run_id='resume-existing',
             )
         logger.info('No hay queries pendientes para precios.')
         return build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
@@ -356,7 +344,6 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
             output_name='precios_diarios_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-            staging_run_id=staging_run_id,
         )
 
     if errores:

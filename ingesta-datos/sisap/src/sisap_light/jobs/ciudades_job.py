@@ -8,7 +8,6 @@ from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.extractores.sisap_ciudades import SisapCiudadesExtractor
 from sisap_light.jobs.common import (
-    append_partitioned_output,
     build_delta_staging_run_id,
     build_historical_zero_frame,
     build_control_event_row,
@@ -260,7 +259,6 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                 output_name=_output_name(modulo),
                 expected_columns=_expected_columns(modulo),
                 sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
-                staging_run_id='resume-existing',
             )
         logger.info('No hay queries pendientes para {}.', _output_name(modulo))
         return build_scope_output_dir(_output_name(modulo), 'region', region['nombre'])
@@ -423,7 +421,6 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
             output_name=output_name,
             expected_columns=_expected_columns(modulo),
             sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
-            staging_run_id=staging_run_id,
         )
 
     if errores:

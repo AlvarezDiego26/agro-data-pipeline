@@ -8,7 +8,6 @@ from sisap_light.config import get_settings
 from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.ingesta_datos.extractores.sisap_mayorista import SisapMayoristaExtractor
 from sisap_light.jobs.common import (
-    append_partitioned_output,
     build_delta_staging_run_id,
     build_historical_zero_frame,
     build_control_event_row,
@@ -84,15 +83,6 @@ def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object
         persist_control_events_batch(event_rows)
         event_rows.clear()
     persist_control_states(control_states)
-
-
-def _flush_accumulated_frames(accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]]) -> None:
-    flush_accumulated_partitioned_output(
-        accumulated_frames,
-        output_name='volumen_diario_mercado_lima',
-        expected_columns=EXPECTED_COLUMNS,
-        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-    )
 
 
 def _volumen_control_scope(query: SisapQuery) -> tuple[str, str]:
@@ -215,7 +205,6 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
                 output_name='volumen_diario_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
                 sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                staging_run_id='resume-existing',
             )
         logger.info('No hay queries pendientes para volumen.')
         return build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
@@ -397,7 +386,6 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
             output_name='volumen_diario_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-            staging_run_id=staging_run_id,
         )
 
     if errores:
