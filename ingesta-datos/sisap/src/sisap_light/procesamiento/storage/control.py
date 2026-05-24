@@ -560,7 +560,7 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
         if not settings.is_minio:
             if not merged_local_state.is_empty():
                 Path(table_uri).mkdir(parents=True, exist_ok=True)
-                with get_delta_lock():
+                with get_delta_lock(table_uri):
                     _, write_deltalake = get_delta_runtime()
                     write_deltalake(
                         table_uri,
@@ -572,7 +572,7 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
             return table_uri
 
         try:
-            with get_delta_lock():
+            with get_delta_lock(table_uri):
                 DeltaTable, write_deltalake = get_delta_runtime()
                 sync_df = _align_control_keys_columns(_merge_control_frames(pending_state, incoming_df))
                 if sync_df.is_empty():
@@ -654,7 +654,7 @@ def append_control_events(events_df: pl.DataFrame) -> str:
             if not settings.is_minio:
                 if not incoming_events.is_empty():
                     Path(events_uri).mkdir(parents=True, exist_ok=True)
-                    with get_delta_lock():
+                    with get_delta_lock(events_uri):
                         _, write_deltalake = get_delta_runtime()
                         write_deltalake(
                             events_uri,
@@ -672,7 +672,7 @@ def append_control_events(events_df: pl.DataFrame) -> str:
                 return events_uri
 
             try:
-                with get_delta_lock():
+                with get_delta_lock(events_uri):
                     _, write_deltalake = get_delta_runtime()
                     write_deltalake(
                         events_uri,

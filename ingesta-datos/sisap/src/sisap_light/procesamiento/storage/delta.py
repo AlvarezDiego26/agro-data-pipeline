@@ -13,18 +13,26 @@ from sisap_light.procesamiento.storage.merge import (
     normalize_dataset,
 )
 
-DELTA_RUNTIME_LOCK = RLock()
+_DELTA_RUNTIME_INIT_LOCK = RLock()
+_DELTA_TABLE_LOCKS_GUARD = RLock()
+_DELTA_TABLE_LOCKS: dict[str, RLock] = {}
 _DELTA_RUNTIME: tuple[object, object] | None = None
 
 
-def get_delta_lock() -> RLock:
-    return DELTA_RUNTIME_LOCK
+def get_delta_lock(resource_key: str | None = None) -> RLock:
+    key = resource_key or "__delta_runtime__"
+    with _DELTA_TABLE_LOCKS_GUARD:
+        lock = _DELTA_TABLE_LOCKS.get(key)
+        if lock is None:
+            lock = RLock()
+            _DELTA_TABLE_LOCKS[key] = lock
+        return lock
 
 
 def get_delta_runtime() -> tuple[object, object]:
     global _DELTA_RUNTIME
 
-    with DELTA_RUNTIME_LOCK:
+    with _DELTA_RUNTIME_INIT_LOCK:
         if _DELTA_RUNTIME is None:
             from deltalake import DeltaTable
             from deltalake.writer import write_deltalake
@@ -83,8 +91,9 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
     logger.info("Delta write start dataset={} uri={} rows={}", dataset_name, table_uri, df.height)
 
     DeltaTable, write_deltalake = get_delta_runtime()
+    table_lock = get_delta_lock(table_uri)
 
-    with DELTA_RUNTIME_LOCK:
+    with table_lock:
         source_df = normalize_dataset(df, dataset_name)
         source_df = deduplicate_dataset(source_df, dataset_name)
         merge_predicate = _merge_predicate(dataset_name, source_df.columns)
