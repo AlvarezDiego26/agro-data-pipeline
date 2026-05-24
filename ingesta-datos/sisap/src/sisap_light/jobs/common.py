@@ -506,7 +506,7 @@ def resolve_query_dates(
 ) -> tuple[date, date] | None:
     global _CONTROL_READ_DISABLED
     settings = get_settings()
-    if settings.is_manual or not settings.is_incremental:
+    if settings.is_manual:
         return fecha_inicio, fecha_fin
 
     control_last_loaded: date | None = None
@@ -555,6 +555,27 @@ def resolve_query_dates(
             producto_codigo,
             fecha_inicio,
         )
+        return fecha_inicio, fecha_fin
+
+    if settings.is_backfill:
+        next_start = last_loaded + timedelta(days=1)
+        if next_start > fecha_fin:
+            logger.debug(
+                '{} {} producto={} ya completo el backfill hasta {}',
+                output_name, scope_value, producto_codigo, fecha_fin,
+            )
+            return None
+        logger.info(
+            'Backfill retomado para {} {} producto={} desde {} hasta {}',
+            output_name,
+            scope_value,
+            producto_codigo,
+            next_start,
+            fecha_fin,
+        )
+        return next_start, fecha_fin
+
+    if not settings.is_incremental:
         return fecha_inicio, fecha_fin
 
     if not has_materialized_data:

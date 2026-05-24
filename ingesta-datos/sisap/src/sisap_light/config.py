@@ -200,6 +200,10 @@ class Settings(BaseSettings):
         return self.sisap_modo_carga.strip().lower() == 'manual'
 
     @property
+    def is_backfill(self) -> bool:
+        return self.sisap_modo_carga.strip().lower() == 'backfill'
+
+    @property
     def modulos_resueltos(self) -> list[str]:
         return self._split_csv(self.sisap_modulos)
 
