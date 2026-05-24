@@ -262,6 +262,7 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
         group_key=lambda query: query.producto_codigo,
         chunk_size=settings.product_batch_size,
         shard_prefix=f'{output_name}-{region["codigo"]}',
+        max_shards=settings.target_shards_per_scope,
     )
 
     def process_shard(shard) -> list[dict[str, str]]:

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     sisap_scope_max_workers: int = 2
     sisap_shard_max_workers: int = 4
     sisap_product_batch_size: int = 1
+    sisap_target_shards_per_scope: int = 48
+    sisap_historical_chunk_months: int = 6
+    sisap_recent_monthly_lookback_months: int = 18
     sisap_save_debug_html: bool = False
 
     storage_backend: str = 'local'
@@ -228,6 +231,18 @@ class Settings(BaseSettings):
     @property
     def product_batch_size(self) -> int:
         return max(int(self.sisap_product_batch_size or 1), 1)
+
+    @property
+    def target_shards_per_scope(self) -> int:
+        return max(int(self.sisap_target_shards_per_scope or 1), 1)
+
+    @property
+    def historical_chunk_months(self) -> int:
+        return max(int(self.sisap_historical_chunk_months or 1), 1)
+
+    @property
+    def recent_monthly_lookback_months(self) -> int:
+        return max(int(self.sisap_recent_monthly_lookback_months or 1), 1)
 
 
 @lru_cache(maxsize=1)

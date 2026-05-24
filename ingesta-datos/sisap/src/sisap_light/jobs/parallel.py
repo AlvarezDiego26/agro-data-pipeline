@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable, Generic, Iterable, TypeVar
@@ -27,6 +28,7 @@ def build_grouped_shards(
     group_key: Callable[[T], str],
     chunk_size: int,
     shard_prefix: str,
+    max_shards: int | None = None,
 ) -> list[QueryShard[T]]:
     ordered_groups: dict[str, list[T]] = {}
     for item in items:
@@ -34,7 +36,13 @@ def build_grouped_shards(
         ordered_groups.setdefault(key, []).append(item)
 
     grouped_items = list(ordered_groups.items())
-    grouped_chunks = chunk_items(grouped_items, chunk_size)
+    effective_chunk_size = max(int(chunk_size or 1), 1)
+    if max_shards and max_shards > 0 and len(grouped_items) > max_shards:
+        effective_chunk_size = max(
+            effective_chunk_size,
+            math.ceil(len(grouped_items) / max_shards),
+        )
+    grouped_chunks = chunk_items(grouped_items, effective_chunk_size)
     shards: list[QueryShard[T]] = []
     for idx, chunk in enumerate(grouped_chunks, start=1):
         shard_items: list[T] = []

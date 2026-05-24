@@ -187,6 +187,7 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
         group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
         chunk_size=settings.product_batch_size,
         shard_prefix=f'precios-{scope_value}',
+        max_shards=settings.target_shards_per_scope,
     )
 
     def process_shard(shard) -> list[dict[str, str]]:
