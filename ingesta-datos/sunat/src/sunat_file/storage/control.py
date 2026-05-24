@@ -474,7 +474,6 @@ def append_control_events(events_df: pl.DataFrame) -> str:
 
         settings = get_settings()
         events_uri = _control_events_uri()
-        storage_options = settings.delta_storage_options
         incoming_events = _normalize_control_frame(events_df)
         local_events = _read_local_control_events()
         pending_events = _read_pending_control_events()
@@ -482,33 +481,46 @@ def append_control_events(events_df: pl.DataFrame) -> str:
         if not merged_local_events.is_empty():
             _write_local_control_events(merged_local_events)
 
-        if not settings.is_minio:
-            try:
-                existing_events = pl.read_parquet(events_uri)
-                existing_events = _normalize_control_frame(existing_events)
-            except Exception:
-                existing_events = pl.DataFrame()
-            all_events = _append_event_frames(existing_events, pending_events, incoming_events)
-            if not all_events.is_empty():
-                all_events.write_parquet(events_uri)
-            _write_pending_control_events(pl.DataFrame())
+        events_to_sync = _append_event_frames(pending_events, incoming_events)
+        if events_to_sync.is_empty():
             return events_uri
 
-        try:
+        if not settings.is_minio:
             try:
-                existing_events = pl.read_parquet(events_uri, storage_options=storage_options)
-                existing_events = _normalize_control_frame(existing_events)
+                Path(events_uri).mkdir(parents=True, exist_ok=True)
+                with DELTA_RUNTIME_LOCK:
+                    _, write_deltalake = get_delta_runtime()
+                    write_deltalake(
+                        events_uri,
+                        events_to_sync.to_arrow(),
+                        mode='append',
+                        schema_mode='merge',
+                        engine='rust',
+                        storage_options=settings.delta_storage_options,
+                    )
+                _write_pending_control_events(pl.DataFrame())
+                return events_uri
             except Exception:
-                existing_events = pl.DataFrame()
-            events_to_sync = _append_event_frames(existing_events, pending_events, incoming_events)
-            if not events_to_sync.is_empty():
-                events_to_sync.write_parquet(events_uri, storage_options=storage_options)
+                logger.exception('No se pudo sincronizar el journal de eventos SUNAT local; se conserva en cache local.')
+                _write_pending_control_events(events_to_sync)
+                return str(_pending_control_events_path())
+
+        try:
+            with DELTA_RUNTIME_LOCK:
+                _, write_deltalake = get_delta_runtime()
+                write_deltalake(
+                    events_uri,
+                    events_to_sync.to_arrow(),
+                    mode='append',
+                    schema_mode='merge',
+                    engine='rust',
+                    storage_options=settings.delta_storage_options,
+                )
             _write_pending_control_events(pl.DataFrame())
             return events_uri
         except Exception:
             logger.exception('No se pudo sincronizar el journal de eventos SUNAT con MinIO; se conserva en cache local.')
-            events_to_pending = _append_event_frames(pending_events, incoming_events)
-            _write_pending_control_events(events_to_pending)
+            _write_pending_control_events(events_to_sync)
             return str(_pending_control_events_path())
 
 
