@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     sisap_timeout_seconds: int = 30
     sisap_retry_intentos: int = 3
     sisap_retry_espera_segundos: int = 3
+    delta_retry_intentos_429: int = 3
+    delta_retry_espera_segundos_429: int = 30
     sisap_fecha_inicio: str = '2016-01-01'
     sisap_fecha_fin: str = ''
     sisap_modo_carga: str = 'incremental'
@@ -261,6 +263,14 @@ class Settings(BaseSettings):
     @property
     def recent_monthly_lookback_months(self) -> int:
         return max(int(self.sisap_recent_monthly_lookback_months or 1), 1)
+
+    @property
+    def delta_retry_attempts_429(self) -> int:
+        return max(int(self.delta_retry_intentos_429 or 1), 1)
+
+    @property
+    def delta_retry_wait_seconds_429(self) -> int:
+        return max(int(self.delta_retry_espera_segundos_429 or 1), 1)
 
 
 @lru_cache(maxsize=1)

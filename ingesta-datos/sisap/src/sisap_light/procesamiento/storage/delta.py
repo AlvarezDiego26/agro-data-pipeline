@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import RLock
+from time import sleep
 
 import polars as pl
 from loguru import logger
@@ -79,6 +80,43 @@ def _change_predicate(dataset_name: str, columns: list[str]) -> str | None:
     return " OR ".join(comparisons)
 
 
+def _is_too_many_requests_error(exc: Exception) -> bool:
+    message = str(exc)
+    normalized = message.lower()
+    return "429" in normalized or "too many requests" in normalized
+
+
+def _run_delta_write_with_retry(
+    write_operation,
+    *,
+    dataset_name: str,
+    table_uri: str,
+    settings,
+):
+    max_attempts = settings.delta_retry_attempts_429
+    base_wait = settings.delta_retry_wait_seconds_429
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return write_operation()
+        except Exception as exc:
+            is_429 = _is_too_many_requests_error(exc)
+            should_retry = is_429 and attempt < max_attempts
+            if not should_retry:
+                raise
+
+            wait_seconds = base_wait * attempt
+            logger.warning(
+                "Delta write retry dataset={} uri={} intento={}/{} espera={}s motivo=429",
+                dataset_name,
+                table_uri,
+                attempt,
+                max_attempts,
+                wait_seconds,
+            )
+            sleep(wait_seconds)
+
+
 def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[str]) -> str:
     if df.is_empty():
         logger.warning("Delta skip: dataframe vacio para {}", dataset_name)
@@ -113,30 +151,44 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
                     )
 
                 change_predicate = _change_predicate(dataset_name, source_df.columns)
-                merge_builder = existing_table.merge(
-                    source=source_df.to_arrow(),
-                    predicate=merge_predicate,
-                    source_alias="source",
-                    target_alias="target",
-                )
-                if change_predicate:
-                    merge_builder = merge_builder.when_matched_update_all(
-                        predicate=change_predicate
+
+                def execute_merge():
+                    merge_builder = existing_table.merge(
+                        source=source_df.to_arrow(),
+                        predicate=merge_predicate,
+                        source_alias="source",
+                        target_alias="target",
                     )
-                merge_builder.when_not_matched_insert_all().execute()
+                    if change_predicate:
+                        merge_builder = merge_builder.when_matched_update_all(
+                            predicate=change_predicate
+                        )
+                    return merge_builder.when_not_matched_insert_all().execute()
+
+                _run_delta_write_with_retry(
+                    execute_merge,
+                    dataset_name=dataset_name,
+                    table_uri=table_uri,
+                    settings=settings,
+                )
                 logger.info("Delta merge OK dataset={} uri={}", dataset_name, table_uri)
                 return table_uri
 
             if not settings.is_minio:
                 Path(table_uri).mkdir(parents=True, exist_ok=True)
 
-            write_deltalake(
-                table_uri,
-                source_df.to_arrow(),
-                mode="overwrite",
-                partition_by=partition_cols,
-                storage_options=storage_options,
-                engine="rust",
+            _run_delta_write_with_retry(
+                lambda: write_deltalake(
+                    table_uri,
+                    source_df.to_arrow(),
+                    mode="overwrite",
+                    partition_by=partition_cols,
+                    storage_options=storage_options,
+                    engine="rust",
+                ),
+                dataset_name=dataset_name,
+                table_uri=table_uri,
+                settings=settings,
             )
             logger.info("Delta overwrite OK dataset={} uri={}", dataset_name, table_uri)
             return table_uri
