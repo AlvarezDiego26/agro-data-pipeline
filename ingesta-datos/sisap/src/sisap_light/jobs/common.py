@@ -1127,8 +1127,6 @@ def _prepare_partitioned_output_frame(
     final_df = final_df.sort(sort_columns)
     return final_df.with_columns(
         pl.col('fecha').alias('fecha_particion'),
-        pl.col('fecha').dt.year().cast(pl.Int32).alias('anio'),
-        pl.col('fecha').dt.strftime('%m').alias('mes'),
     )
 
 
@@ -1175,7 +1173,7 @@ def finalize_staged_delta_output(
         expected_columns,
         sort_columns,
     )
-    result = save_delta_table(final_df, output_name, ['anio', 'mes'])
+    result = save_delta_table(final_df, output_name, ['fecha_particion'])
     shutil.rmtree(staging_root, ignore_errors=True)
     return result
 
@@ -1220,7 +1218,7 @@ def flush_accumulated_partitioned_output(
                     final_df.height,
                 )
             else:
-                save_delta_table(final_df, output_name, ['anio', 'mes'])
+                save_delta_table(final_df, output_name, ['fecha_particion'])
         accumulated_frames.clear()
         return
 
@@ -1256,7 +1254,7 @@ def append_partitioned_output(
     settings = get_settings()
 
     if settings.delta_enabled:
-        save_delta_table(final_df, output_name, ['anio', 'mes'])
+        save_delta_table(final_df, output_name, ['fecha_particion'])
         scope_output = build_scope_output_dir(output_name, scope_label, scope_value)
         scope_output.mkdir(parents=True, exist_ok=True)
         return scope_output
@@ -1275,6 +1273,6 @@ def append_partitioned_output(
         product_df = final_df.filter(pl.col('producto_nombre') == producto_nombre)
         output = scope_output / product_folder
         dataset_name = f'{output_name}/{scope_folder}/{product_folder}'
-        save_partitioned_parquet(product_df, dataset_name, output, ['anio', 'mes'])
+        save_partitioned_parquet(product_df, dataset_name, output, ['fecha_particion'])
 
     return scope_output
