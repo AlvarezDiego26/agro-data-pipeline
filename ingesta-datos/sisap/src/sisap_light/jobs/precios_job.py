@@ -12,6 +12,7 @@ from sisap_light.jobs.common import (
     build_scope_output_dir,
     expand_mayorista_plan_for_procedencia,
     filter_plan,
+    flush_accumulated_partitioned_output,
     init_control_states,
     iter_mercados_ejecucion,
     persist_control_events_batch,
@@ -148,18 +149,12 @@ def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object
 
 
 def _flush_accumulated_frames(accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]]) -> None:
-    for (scope_label, scope_value), frames_list in accumulated_frames.items():
-        if not frames_list:
-            continue
-        append_partitioned_output(
-            frames=frames_list,
-            output_name='precios_diarios_mercado_lima',
-            expected_columns=EXPECTED_COLUMNS,
-            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-            scope_label=scope_label,
-            scope_value=scope_value,
-        )
-    accumulated_frames.clear()
+    flush_accumulated_partitioned_output(
+        accumulated_frames,
+        output_name='precios_diarios_mercado_lima',
+        expected_columns=EXPECTED_COLUMNS,
+        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+    )
 
 
 def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None = None) -> Path:

@@ -12,6 +12,7 @@ from sisap_light.jobs.common import (
     build_control_event_row,
     build_scope_output_dir,
     filter_plan,
+    flush_accumulated_partitioned_output,
     init_control_states,
     persist_control_events_batch,
     persist_control_states,
@@ -361,17 +362,12 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
                     if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                         _flush_control_batch(control_states, pending_event_rows)
                     shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': str(exc)})
-            # Guardar todos los dataframes acumulados del shard en un solo lote
-            for (sl, sv), frames_list in accumulated_frames.items():
-                if frames_list:
-                    append_partitioned_output(
-                        frames=frames_list,
-                        output_name=output_name,
-                        expected_columns=_expected_columns(modulo),
-                        sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
-                        scope_label=sl,
-                        scope_value=sv,
-                    )
+            flush_accumulated_partitioned_output(
+                accumulated_frames,
+                output_name=output_name,
+                expected_columns=_expected_columns(modulo),
+                sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+            )
             _flush_control_batch(control_states, pending_event_rows)
         finally:
             extractor.close()

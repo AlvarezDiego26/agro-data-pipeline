@@ -830,6 +830,69 @@ def persist_control_events_batch(event_rows: list[dict[str, object]]) -> str:
     return append_control_events(pl.DataFrame(event_rows))
 
 
+def _prepare_partitioned_output_frame(
+    frames: list[pl.DataFrame],
+    output_name: str,
+    expected_columns: list[str],
+    sort_columns: list[str],
+) -> pl.DataFrame:
+    if not frames:
+        raise ValueError(f'La corrida parcial de {output_name} no produjo data util.')
+
+    final_df = pl.concat(frames, how='vertical_relaxed')
+    final_df = normalize_dataset(final_df, output_name)
+    validate_non_empty(final_df, output_name)
+    validate_expected_columns(final_df, expected_columns, output_name)
+    final_df = final_df.sort(sort_columns)
+    return final_df.with_columns(
+        pl.col('fecha').alias('fecha_particion'),
+        pl.col('fecha').dt.year().cast(pl.Int32).alias('anio'),
+        pl.col('fecha').dt.strftime('%m').alias('mes'),
+    )
+
+
+def flush_accumulated_partitioned_output(
+    accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]],
+    *,
+    output_name: str,
+    expected_columns: list[str],
+    sort_columns: list[str],
+) -> None:
+    if not accumulated_frames:
+        return
+
+    settings = get_settings()
+    if settings.delta_enabled:
+        merged_frames = [
+            frame
+            for frames_list in accumulated_frames.values()
+            for frame in frames_list
+        ]
+        if merged_frames:
+            final_df = _prepare_partitioned_output_frame(
+                merged_frames,
+                output_name,
+                expected_columns,
+                sort_columns,
+            )
+            save_delta_table(final_df, output_name, ['fecha_particion'])
+        accumulated_frames.clear()
+        return
+
+    for (scope_label, scope_value), frames_list in accumulated_frames.items():
+        if not frames_list:
+            continue
+        append_partitioned_output(
+            frames=frames_list,
+            output_name=output_name,
+            expected_columns=expected_columns,
+            sort_columns=sort_columns,
+            scope_label=scope_label,
+            scope_value=scope_value,
+        )
+    accumulated_frames.clear()
+
+
 def append_partitioned_output(
     frames: list[pl.DataFrame],
     output_name: str,
@@ -838,24 +901,11 @@ def append_partitioned_output(
     scope_label: str,
     scope_value: str,
 ) -> Path:
-    if not frames:
-        raise ValueError(f'La corrida parcial de {output_name} no produjo data util.')
-
-    final_df = pl.concat(frames, how='vertical_relaxed')
-
-    # 1. Normalizar los nulos (sin tocar las llaves de negocio)
-    final_df = normalize_dataset(final_df, output_name)
-
-    # 2. Validaciones basicas de calidad
-    validate_non_empty(final_df, output_name)
-    validate_expected_columns(final_df, expected_columns, output_name)
-
-    # 3. Formateo y orden local antes del Storage
-    final_df = final_df.sort(sort_columns)
-    final_df = final_df.with_columns(
-        pl.col('fecha').alias('fecha_particion'),
-        pl.col('fecha').dt.year().cast(pl.Int32).alias('anio'),
-        pl.col('fecha').dt.strftime('%m').alias('mes'),
+    final_df = _prepare_partitioned_output_frame(
+        frames,
+        output_name,
+        expected_columns,
+        sort_columns,
     )
 
     settings = get_settings()
