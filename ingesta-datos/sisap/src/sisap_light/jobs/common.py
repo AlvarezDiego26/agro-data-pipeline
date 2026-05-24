@@ -341,6 +341,22 @@ def build_delta_staging_dir(output_name: str, run_id: str) -> Path:
     return settings.delta_staging_dir / slugify(output_name) / run_id
 
 
+def _build_delta_staging_root(output_name: str) -> Path:
+    settings = get_settings()
+    return settings.delta_staging_dir / slugify(output_name)
+
+
+def _list_staged_delta_files(output_name: str) -> list[Path]:
+    staging_root = _build_delta_staging_root(output_name)
+    if not staging_root.exists():
+        return []
+    return sorted(staging_root.rglob('*.parquet'))
+
+
+def has_staged_delta_output(output_name: str) -> bool:
+    return bool(_list_staged_delta_files(output_name))
+
+
 def _get_delta_date_bounds(dataset_name: str) -> tuple[date | None, date | None]:
     settings = get_settings()
     try:
@@ -425,6 +441,29 @@ def _merge_date_bounds(rows: list[tuple[date | None, date | None]]) -> tuple[dat
     return (min(mins) if mins else None, max(maxs) if maxs else None)
 
 
+def _get_staged_delta_date_bounds(output_name: str) -> tuple[date | None, date | None]:
+    staged_files = _list_staged_delta_files(output_name)
+    if not staged_files:
+        return None, None
+
+    minima: date | None = None
+    maxima: date | None = None
+    for staged_file in staged_files:
+        try:
+            fecha_df = pl.read_parquet(staged_file, columns=['fecha']).drop_nulls()
+            if fecha_df.is_empty():
+                continue
+            current_min = fecha_df.get_column('fecha').min()
+            current_max = fecha_df.get_column('fecha').max()
+            if minima is None or current_min < minima:
+                minima = current_min
+            if maxima is None or current_max > maxima:
+                maxima = current_max
+        except Exception:
+            continue
+    return minima, maxima
+
+
 def get_loaded_date_bounds(
     output_name: str,
     scope_label: str,
@@ -435,9 +474,15 @@ def get_loaded_date_bounds(
 ) -> tuple[date | None, date | None]:
     settings = get_settings()
     if settings.delta_enabled:
-        return _get_delta_consolidated_bounds(
-            output_name, scope_label, scope_value, producto_codigo, mercado_codigo
+        committed_bounds = _get_delta_consolidated_bounds(
+            output_name,
+            scope_label,
+            scope_value,
+            producto_codigo,
+            mercado_codigo,
         )
+        staged_bounds = _get_staged_delta_date_bounds(output_name)
+        return _merge_date_bounds([committed_bounds, staged_bounds])
 
     dataset_name = build_dataset_name(output_name, scope_label, scope_value, producto_nombre)
     min_delta_date, max_delta_date = _get_delta_date_bounds(dataset_name)
@@ -1065,15 +1110,15 @@ def finalize_staged_delta_output(
     sort_columns: list[str],
     staging_run_id: str,
 ) -> str:
-    staging_dir = build_delta_staging_dir(output_name, staging_run_id)
-    if not staging_dir.exists():
-        logger.info('No hubo archivos staged para {} en {}', output_name, staging_dir)
+    staging_root = _build_delta_staging_root(output_name)
+    if not staging_root.exists():
+        logger.info('No hubo archivos staged para {} en {}', output_name, staging_root)
         return ''
 
-    staged_files = sorted(staging_dir.rglob('*.parquet'))
+    staged_files = _list_staged_delta_files(output_name)
     if not staged_files:
-        logger.info('No hubo archivos parquet staged para {} en {}', output_name, staging_dir)
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        logger.info('No hubo archivos parquet staged para {} en {}', output_name, staging_root)
+        shutil.rmtree(staging_root, ignore_errors=True)
         return ''
 
     logger.info(
@@ -1087,10 +1132,9 @@ def finalize_staged_delta_output(
         expected_columns,
         sort_columns,
     )
-    try:
-        return save_delta_table(final_df, output_name, ['fecha_particion'])
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+    result = save_delta_table(final_df, output_name, ['fecha_particion'])
+    shutil.rmtree(staging_root, ignore_errors=True)
+    return result
 
 
 def flush_accumulated_partitioned_output(

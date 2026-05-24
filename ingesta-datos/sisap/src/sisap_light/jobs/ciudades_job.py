@@ -16,6 +16,7 @@ from sisap_light.jobs.common import (
     finalize_staged_delta_output,
     filter_plan,
     flush_accumulated_partitioned_output,
+    has_staged_delta_output,
     init_control_states,
     persist_control_events_batch,
     persist_control_states,
@@ -254,6 +255,13 @@ def run_full(modulo: ModuloSisap, region_nombre: str | None = None) -> Path:
     region = _resolve_region(region_nombre)
     plan = filter_plan(_build_raw_plan(modulo, region['nombre']), settings.sisap_max_queries)
     if not plan:
+        if settings.delta_enabled and has_staged_delta_output(_output_name(modulo)):
+            finalize_staged_delta_output(
+                output_name=_output_name(modulo),
+                expected_columns=_expected_columns(modulo),
+                sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                staging_run_id='resume-existing',
+            )
         logger.info('No hay queries pendientes para {}.', _output_name(modulo))
         return build_scope_output_dir(_output_name(modulo), 'region', region['nombre'])
 

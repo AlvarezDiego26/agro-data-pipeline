@@ -1,12 +1,19 @@
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
+import re
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sisap_light.ingesta_datos.catalogos.procedencias import PROCEDENCIAS_SISAP
 from sisap_light.ingesta_datos.catalogos.mercados import MERCADOS_SISAP
+
+
+def _slug_path_token(raw_value: str) -> str:
+    token = re.sub(r'[^A-Za-z0-9._-]+', '_', raw_value.strip())
+    token = token.strip('._-')
+    return token or 'default'
 
 
 class Settings(BaseSettings):
@@ -100,7 +107,10 @@ class Settings(BaseSettings):
 
     @property
     def control_dir(self) -> Path:
-        return self.data_dir / 'control'
+        namespace = _slug_path_token(
+            f'{self.storage_backend}|{self.minio_prefix}|{self.sisap_control_dataset}|{self.sisap_control_events_dataset}'
+        )
+        return self.data_dir / 'control' / namespace
 
     @property
     def control_local_state_path(self) -> Path:

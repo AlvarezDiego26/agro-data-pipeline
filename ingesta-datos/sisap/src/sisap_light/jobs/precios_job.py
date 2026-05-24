@@ -16,6 +16,7 @@ from sisap_light.jobs.common import (
     finalize_staged_delta_output,
     filter_plan,
     flush_accumulated_partitioned_output,
+    has_staged_delta_output,
     init_control_states,
     iter_mercados_ejecucion,
     persist_control_events_batch,
@@ -173,6 +174,13 @@ def run_full(mercado_nombre: str | None = None, procedencia_nombre: str | None =
 
     plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre'] if procedencia else None), settings.sisap_max_queries)
     if not plan:
+        if settings.delta_enabled and has_staged_delta_output('precios_diarios_mercado_lima'):
+            finalize_staged_delta_output(
+                output_name='precios_diarios_mercado_lima',
+                expected_columns=EXPECTED_COLUMNS,
+                sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                staging_run_id='resume-existing',
+            )
         logger.info('No hay queries pendientes para precios.')
         return build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
 
