@@ -242,6 +242,37 @@ def _append_event_frames(*frames: pl.DataFrame) -> pl.DataFrame:
     return merged
 
 
+def _quote_identifier(column: str) -> str:
+    escaped = column.replace("`", "``")
+    return f"`{escaped}`"
+
+
+def _control_merge_predicate(columns: list[str]) -> str:
+    keys = [column for column in CONTROL_KEY_COLUMNS if column in columns]
+    if len(keys) != len(CONTROL_KEY_COLUMNS):
+        missing = [column for column in CONTROL_KEY_COLUMNS if column not in columns]
+        raise ValueError(f'Llaves de control incompletas para merge: {missing}')
+    return " AND ".join(f"target.{column} = source.{column}" for column in keys)
+
+
+def _control_change_predicate(columns: list[str]) -> str | None:
+    comparable_columns = [column for column in columns if column not in CONTROL_KEY_COLUMNS]
+    if not comparable_columns:
+        return None
+
+    comparisons: list[str] = []
+    for column in comparable_columns:
+        quoted = _quote_identifier(column)
+        comparisons.append(
+            "("
+            f"(target.{quoted} IS NULL AND source.{quoted} IS NOT NULL) OR "
+            f"(target.{quoted} IS NOT NULL AND source.{quoted} IS NULL) OR "
+            f"(target.{quoted} != source.{quoted})"
+            ")"
+        )
+    return " OR ".join(comparisons)
+
+
 def _quarantine_corrupt_file(file_path: Path) -> None:
     if not file_path.exists():
         return
@@ -312,19 +343,100 @@ def _write_pending_control_events(events_df: pl.DataFrame) -> None:
     _write_parquet_atomic(events_df, _pending_control_events_path(), keep_empty_file=False)
 
 
-def read_control_table() -> pl.DataFrame:
+def _build_control_filter_expr(
+    fuente: str,
+    modulo: str,
+    dataset: str,
+    scope_tipo: str,
+    scope_valor: str,
+    producto_codigo: str,
+    mercado_codigo: str | None = None,
+) -> pl.Expr:
+    mc = mercado_codigo if mercado_codigo is not None else ''
+    return (
+        (pl.col('fuente') == fuente)
+        & (pl.col('modulo') == modulo)
+        & (pl.col('dataset') == dataset)
+        & (pl.col('scope_tipo') == scope_tipo)
+        & (pl.col('scope_valor') == scope_valor)
+        & (pl.col('producto_codigo') == producto_codigo)
+        & (pl.col('mercado_codigo').fill_null('') == mc)
+    )
+
+
+def _filter_control_frame(
+    frame: pl.DataFrame,
+    fuente: str,
+    modulo: str,
+    dataset: str,
+    scope_tipo: str,
+    scope_valor: str,
+    producto_codigo: str,
+    mercado_codigo: str | None = None,
+) -> pl.DataFrame:
+    frame = _ensure_control_mercado_columns(frame)
+    if frame.is_empty():
+        return frame
+    return frame.filter(
+        _build_control_filter_expr(
+            fuente,
+            modulo,
+            dataset,
+            scope_tipo,
+            scope_valor,
+            producto_codigo,
+            mercado_codigo,
+        )
+    )
+
+
+def _read_remote_control_state(
+    fuente: str | None = None,
+    modulo: str | None = None,
+    dataset: str | None = None,
+    scope_tipo: str | None = None,
+    scope_valor: str | None = None,
+    producto_codigo: str | None = None,
+    mercado_codigo: str | None = None,
+) -> pl.DataFrame:
     settings = get_settings()
     table_uri = _control_uri()
     storage_options = settings.delta_storage_options
+
+    scan = pl.scan_delta(table_uri, storage_options=storage_options)
+    schema_names = set(scan.collect_schema().names())
+
+    lf = scan
+    if fuente is not None:
+        lf = lf.filter(pl.col('fuente') == fuente)
+    if modulo is not None:
+        lf = lf.filter(pl.col('modulo') == modulo)
+    if dataset is not None:
+        lf = lf.filter(pl.col('dataset') == dataset)
+    if scope_tipo is not None:
+        lf = lf.filter(pl.col('scope_tipo') == scope_tipo)
+    if scope_valor is not None:
+        lf = lf.filter(pl.col('scope_valor') == scope_valor)
+    if producto_codigo is not None:
+        lf = lf.filter(pl.col('producto_codigo') == producto_codigo)
+    if mercado_codigo is not None:
+        mc = mercado_codigo or ''
+        if 'mercado_codigo' in schema_names:
+            lf = lf.filter(pl.col('mercado_codigo').fill_null('') == mc)
+        elif mc:
+            return pl.DataFrame()
+
+    remote_state = _normalize_control_frame(lf.collect())
+    return _align_control_keys_columns(remote_state)
+
+
+def read_control_table() -> pl.DataFrame:
     with _control_guard():
         local_state = _read_local_control_state()
         pending_state = _read_pending_control_state()
 
     try:
-        with get_delta_lock():
-            DeltaTable, _ = get_delta_runtime()
-            table = DeltaTable(table_uri, storage_options=storage_options)
-            remote_state = _normalize_control_frame(pl.from_arrow(table.to_pyarrow_table()))
+        remote_state = _read_remote_control_state()
         merged_state = _merge_control_frames(remote_state, local_state, pending_state)
         if not merged_state.is_empty():
             with _control_guard():
@@ -354,19 +466,32 @@ def get_last_successful_date(
     producto_codigo: str,
     mercado_codigo: str | None = None,
 ) -> object | None:
-    control_df = _ensure_control_mercado_columns(read_control_table())
-    if control_df.is_empty():
-        return None
+    with _control_guard():
+        local_state = _read_local_control_state()
+        pending_state = _read_pending_control_state()
+    try:
+        remote_state = _read_remote_control_state(
+            fuente=fuente,
+            modulo=modulo,
+            dataset=dataset,
+            scope_tipo=scope_tipo,
+            scope_valor=scope_valor,
+            producto_codigo=producto_codigo,
+            mercado_codigo=mercado_codigo,
+        )
+    except Exception:
+        remote_state = pl.DataFrame()
 
-    mc = mercado_codigo if mercado_codigo is not None else ''
-    filtered = control_df.filter(
-        (pl.col('fuente') == fuente)
-        & (pl.col('modulo') == modulo)
-        & (pl.col('dataset') == dataset)
-        & (pl.col('scope_tipo') == scope_tipo)
-        & (pl.col('scope_valor') == scope_valor)
-        & (pl.col('producto_codigo') == producto_codigo)
-        & (pl.col('mercado_codigo').fill_null('') == mc)
+    filtered = _merge_control_frames(remote_state, local_state, pending_state).filter(
+        _build_control_filter_expr(
+            fuente,
+            modulo,
+            dataset,
+            scope_tipo,
+            scope_valor,
+            producto_codigo,
+            mercado_codigo,
+        )
         & (pl.col('ultima_fecha_exitosa').is_not_null())
     )
     if filtered.is_empty():
@@ -383,19 +508,32 @@ def get_control_status(
     producto_codigo: str,
     mercado_codigo: str | None = None,
 ) -> dict[str, object] | None:
-    control_df = _ensure_control_mercado_columns(read_control_table())
-    if control_df.is_empty():
-        return None
+    with _control_guard():
+        local_state = _read_local_control_state()
+        pending_state = _read_pending_control_state()
+    try:
+        remote_state = _read_remote_control_state(
+            fuente=fuente,
+            modulo=modulo,
+            dataset=dataset,
+            scope_tipo=scope_tipo,
+            scope_valor=scope_valor,
+            producto_codigo=producto_codigo,
+            mercado_codigo=mercado_codigo,
+        )
+    except Exception:
+        remote_state = pl.DataFrame()
 
-    mc = mercado_codigo if mercado_codigo is not None else ''
-    filtered = control_df.filter(
-        (pl.col('fuente') == fuente)
-        & (pl.col('modulo') == modulo)
-        & (pl.col('dataset') == dataset)
-        & (pl.col('scope_tipo') == scope_tipo)
-        & (pl.col('scope_valor') == scope_valor)
-        & (pl.col('producto_codigo') == producto_codigo)
-        & (pl.col('mercado_codigo').fill_null('') == mc)
+    filtered = _merge_control_frames(remote_state, local_state, pending_state).filter(
+        _build_control_filter_expr(
+            fuente,
+            modulo,
+            dataset,
+            scope_tipo,
+            scope_valor,
+            producto_codigo,
+            mercado_codigo,
+        )
     )
     if filtered.is_empty():
         return None
@@ -435,26 +573,40 @@ def upsert_control_records(records_df: pl.DataFrame) -> str:
 
         try:
             with get_delta_lock():
-                DeltaTable, _ = get_delta_runtime()
-                existing_table = DeltaTable(table_uri, storage_options=storage_options)
-                remote_state = _normalize_control_frame(pl.from_arrow(existing_table.to_pyarrow_table()))
-        except Exception:
-            remote_state = pl.DataFrame()
+                DeltaTable, write_deltalake = get_delta_runtime()
+                sync_df = _align_control_keys_columns(_merge_control_frames(pending_state, incoming_df))
+                if sync_df.is_empty():
+                    return table_uri
+                try:
+                    existing_table = DeltaTable(table_uri, storage_options=storage_options)
+                except Exception:
+                    existing_table = None
 
-        merged_remote_state = _merge_control_frames(remote_state, pending_state, incoming_df)
-        try:
-            with get_delta_lock():
-                _, write_deltalake = get_delta_runtime()
-                write_deltalake(
-                    table_uri,
-                    merged_remote_state.to_arrow(),
-                    mode='overwrite',
-                    schema_mode='merge',
-                    engine='rust',
-                    storage_options=storage_options,
-                )
+                if existing_table is None:
+                    write_deltalake(
+                        table_uri,
+                        sync_df.to_arrow(),
+                        mode='overwrite',
+                        schema_mode='merge',
+                        engine='rust',
+                        storage_options=storage_options,
+                    )
+                else:
+                    merge_predicate = _control_merge_predicate(sync_df.columns)
+                    change_predicate = _control_change_predicate(sync_df.columns)
+                    merge_builder = existing_table.merge(
+                        source=sync_df.to_arrow(),
+                        predicate=merge_predicate,
+                        source_alias='source',
+                        target_alias='target',
+                    )
+                    if change_predicate:
+                        merge_builder = merge_builder.when_matched_update_all(
+                            predicate=change_predicate
+                        )
+                    merge_builder.when_not_matched_insert_all().execute()
             _write_pending_control_state(pl.DataFrame())
-            _write_local_control_state(merged_remote_state)
+            _write_local_control_state(merged_local_state)
             return table_uri
         except Exception:
             logger.exception('No se pudo sincronizar control con MinIO; se conserva en cache local.')
