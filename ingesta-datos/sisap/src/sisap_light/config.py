@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     sisap_historical_chunk_months: int = 6
     sisap_recent_monthly_lookback_months: int = 18
     sisap_save_debug_html: bool = False
+    delta_write_pause_seconds: int = 0
 
     storage_backend: str = 'local'
     delta_enabled: bool = True

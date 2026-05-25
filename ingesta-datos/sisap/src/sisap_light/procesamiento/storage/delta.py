@@ -125,6 +125,7 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
     settings = get_settings()
     table_uri = settings.build_delta_uri(dataset_name)
     storage_options = settings.delta_storage_options
+    write_pause_seconds = max(settings.delta_write_pause_seconds, 0)
 
     logger.info("Delta write start dataset={} uri={} rows={}", dataset_name, table_uri, df.height)
 
@@ -172,6 +173,14 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
                     settings=settings,
                 )
                 logger.info("Delta merge OK dataset={} uri={}", dataset_name, table_uri)
+                if write_pause_seconds:
+                    logger.info(
+                        "Delta write pause dataset={} uri={} seconds={}",
+                        dataset_name,
+                        table_uri,
+                        write_pause_seconds,
+                    )
+                    sleep(write_pause_seconds)
                 return table_uri
 
             if not settings.is_minio:
@@ -191,6 +200,14 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
                 settings=settings,
             )
             logger.info("Delta overwrite OK dataset={} uri={}", dataset_name, table_uri)
+            if write_pause_seconds:
+                logger.info(
+                    "Delta write pause dataset={} uri={} seconds={}",
+                    dataset_name,
+                    table_uri,
+                    write_pause_seconds,
+                )
+                sleep(write_pause_seconds)
             return table_uri
 
         except Exception:
