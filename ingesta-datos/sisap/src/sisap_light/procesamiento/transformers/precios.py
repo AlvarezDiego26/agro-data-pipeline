@@ -109,7 +109,7 @@ def build_precio_metric_frame(rows: list[list[str]], query: SisapQuery, metric_n
         .with_columns(
             pl.lit(query.producto_codigo).alias("producto_codigo"),
             pl.lit(query.producto_nombre).alias("producto_nombre"),
-            pl.lit(query.procedencia_nombre or "TODOS").alias("procedencia"),
+            pl.lit("").alias("procedencia"),
             pl.lit(query.procedencia_codigo or "000000").alias("procedencia_filtro_codigo"),
             pl.lit(query.procedencia_nombre or "TODOS").alias("procedencia_filtro_nombre"),
             pl.lit(query.mercado_codigo or "").alias("mercado_codigo"),
@@ -169,7 +169,7 @@ def _build_multilevel_precio_frame(rows: list[list[str]], query: SisapQuery, met
         .with_columns(
             pl.lit(query.producto_codigo).alias("producto_codigo"),
             pl.lit(query.producto_nombre).alias("producto_nombre"),
-            pl.lit(query.procedencia_nombre or "TODOS").alias("procedencia"),
+            pl.lit("").alias("procedencia"),
             pl.lit(query.procedencia_codigo or "000000").alias("procedencia_filtro_codigo"),
             pl.lit(query.procedencia_nombre or "TODOS").alias("procedencia_filtro_nombre"),
             pl.lit(query.mercado_codigo or "").alias("mercado_codigo"),
@@ -217,7 +217,7 @@ def _build_snapshot_precio_frame(header: list[str], data: list[list[str]], query
             .otherwise(pl.col(METRIC_LABELS[metric_name]).str.replace(",", ".", literal=True))
             .cast(pl.Float64, strict=False)
             .alias(METRIC_LABELS[metric_name]),
-            pl.col(col_map["procedencia"]).str.strip_chars().alias("procedencia") if "procedencia" in col_map else pl.lit(query.procedencia_nombre or "").alias("procedencia"),
+            pl.col(col_map["procedencia"]).str.strip_chars().alias("procedencia") if "procedencia" in col_map else pl.lit("").alias("procedencia"),
         )
         .with_columns(
             pl.lit(query.producto_codigo).alias("producto_codigo"),
