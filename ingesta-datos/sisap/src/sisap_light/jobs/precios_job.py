@@ -49,6 +49,7 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = max(get_settings().sisap_control_flush_every, 1)
 OUTPUT_FLUSH_EVERY = max(get_settings().sisap_output_flush_every, 1)
+DELTA_FINALIZE_EVERY_ITEMS = max(get_settings().sisap_delta_finalize_every_items, 1)
 USE_LOCAL_DELTA_STAGING = get_settings().sisap_use_local_delta_staging
 
 
@@ -204,12 +205,42 @@ def run_full(
         pending_event_rows: list[dict[str, object]] = []
         accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
         pending_output_frames = 0
-        staging_run_id = (
-            build_delta_staging_run_id(f'precios_diarios_mercado_lima-{shard.shard_id}')
-            if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
-            else None
-        )
+        processed_since_finalize = 0
+        staging_batch_index = 1
+
+        def _build_staging_run_id() -> str | None:
+            if not (settings.delta_enabled and USE_LOCAL_DELTA_STAGING):
+                return None
+            return build_delta_staging_run_id(
+                f'precios_diarios_mercado_lima-{shard.shard_id}-batch-{staging_batch_index:04d}'
+            )
+
+        staging_run_id = _build_staging_run_id()
         try:
+            def _finalize_batch() -> None:
+                nonlocal pending_output_frames, processed_since_finalize, staging_batch_index, staging_run_id
+                flush_accumulated_partitioned_output(
+                    accumulated_frames,
+                    output_name='precios_diarios_mercado_lima',
+                    expected_columns=EXPECTED_COLUMNS,
+                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    staging_run_id=staging_run_id,
+                    shard_id=shard.shard_id,
+                )
+                pending_output_frames = 0
+                if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
+                    finalize_staged_delta_output(
+                        output_name='precios_diarios_mercado_lima',
+                        expected_columns=EXPECTED_COLUMNS,
+                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                        append_only=append_only_delta,
+                        run_id=staging_run_id,
+                    )
+                    staging_batch_index += 1
+                    staging_run_id = _build_staging_run_id()
+                _flush_control_batch(control_states, pending_event_rows)
+                processed_since_finalize = 0
+
             for idx, query in enumerate(shard.items, start=1):
                 logger.info(
                     'Procesando precios shard={} {}/{} mercado={} producto={} codigo={}',
@@ -281,6 +312,9 @@ def run_full(
                         pending_event_rows.append(event_row)
                         if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                             _flush_control_batch(control_states, pending_event_rows)
+                        processed_since_finalize += 1
+                        if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
+                            _finalize_batch()
                         continue
 
                     validate_expected_columns(df, EXPECTED_COLUMNS, f'precios_{query.producto_codigo}')
@@ -308,6 +342,9 @@ def run_full(
                     pending_event_rows.append(event_row)
                     if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                         _flush_control_batch(control_states, pending_event_rows)
+                    processed_since_finalize += 1
+                    if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
+                        _finalize_batch()
                 except Exception as exc:
                     logger.exception('Fallo extrayendo precios para {} ({})', query.producto_nombre, query.producto_codigo)
                     register_control_failure(control_states, 'precios', 'precios_diarios_mercado_lima', scope_label, scope_value, query, str(exc))
@@ -331,23 +368,10 @@ def run_full(
                             'motivo': str(exc),
                         }
                     )
-            flush_accumulated_partitioned_output(
-                accumulated_frames,
-                output_name='precios_diarios_mercado_lima',
-                expected_columns=EXPECTED_COLUMNS,
-                sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                staging_run_id=staging_run_id,
-                shard_id=shard.shard_id,
-            )
-            if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
-                finalize_staged_delta_output(
-                    output_name='precios_diarios_mercado_lima',
-                    expected_columns=EXPECTED_COLUMNS,
-                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-                    append_only=append_only_delta,
-                    run_id=staging_run_id,
-                )
-            _flush_control_batch(control_states, pending_event_rows)
+                    processed_since_finalize += 1
+                    if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
+                        _finalize_batch()
+            _finalize_batch()
         finally:
             extractor.close()
             accumulated_frames.clear()
