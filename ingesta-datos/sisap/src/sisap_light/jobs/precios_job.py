@@ -188,12 +188,6 @@ def run_full(
     errores: list[dict[str, str]] = []
     output = build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
-    staging_run_id = (
-        build_delta_staging_run_id('precios_diarios_mercado_lima')
-        if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
-        else None
-    )
-
     shards = build_grouped_shards(
         plan,
         group_key=lambda query: f'{query.mercado_codigo or ""}-{query.producto_codigo}',
@@ -210,6 +204,11 @@ def run_full(
         pending_event_rows: list[dict[str, object]] = []
         accumulated_frames: dict[tuple[str, str], list[pl.DataFrame]] = {}
         pending_output_frames = 0
+        staging_run_id = (
+            build_delta_staging_run_id(f'precios_diarios_mercado_lima-{shard.shard_id}')
+            if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
+            else None
+        )
         try:
             for idx, query in enumerate(shard.items, start=1):
                 logger.info(
@@ -340,6 +339,14 @@ def run_full(
                 staging_run_id=staging_run_id,
                 shard_id=shard.shard_id,
             )
+            if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
+                finalize_staged_delta_output(
+                    output_name='precios_diarios_mercado_lima',
+                    expected_columns=EXPECTED_COLUMNS,
+                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    append_only=append_only_delta,
+                    run_id=staging_run_id,
+                )
             _flush_control_batch(control_states, pending_event_rows)
         finally:
             extractor.close()
@@ -355,14 +362,6 @@ def run_full(
     )
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
-
-    if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
-        finalize_staged_delta_output(
-            output_name='precios_diarios_mercado_lima',
-            expected_columns=EXPECTED_COLUMNS,
-            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
-            append_only=append_only_delta,
-        )
 
     if errores:
         error_path = output / 'errores.csv'

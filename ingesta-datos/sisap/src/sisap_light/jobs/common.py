@@ -384,15 +384,19 @@ def _build_delta_staging_root(output_name: str) -> Path:
     return settings.delta_staging_dir / slugify(output_name)
 
 
-def _list_staged_delta_files(output_name: str) -> list[Path]:
-    staging_root = _build_delta_staging_root(output_name)
+def _resolve_delta_staging_target(output_name: str, run_id: str | None = None) -> Path:
+    return build_delta_staging_dir(output_name, run_id) if run_id else _build_delta_staging_root(output_name)
+
+
+def _list_staged_delta_files(output_name: str, run_id: str | None = None) -> list[Path]:
+    staging_root = _resolve_delta_staging_target(output_name, run_id)
     if not staging_root.exists():
         return []
     return sorted(staging_root.rglob('*.parquet'))
 
 
-def has_staged_delta_output(output_name: str) -> bool:
-    return bool(_list_staged_delta_files(output_name))
+def has_staged_delta_output(output_name: str, run_id: str | None = None) -> bool:
+    return bool(_list_staged_delta_files(output_name, run_id))
 
 
 def _get_delta_date_bounds(dataset_name: str) -> tuple[date | None, date | None]:
@@ -1190,13 +1194,14 @@ def finalize_staged_delta_output(
     expected_columns: list[str],
     sort_columns: list[str],
     append_only: bool = False,
+    run_id: str | None = None,
 ) -> str:
-    staging_root = _build_delta_staging_root(output_name)
+    staging_root = _resolve_delta_staging_target(output_name, run_id)
     if not staging_root.exists():
         logger.info('No hubo archivos staged para {} en {}', output_name, staging_root)
         return ''
 
-    staged_files = _list_staged_delta_files(output_name)
+    staged_files = _list_staged_delta_files(output_name, run_id)
     if not staged_files:
         logger.info('No hubo archivos parquet staged para {} en {}', output_name, staging_root)
         shutil.rmtree(staging_root, ignore_errors=True)
