@@ -58,7 +58,7 @@ EXPECTED_COLUMNS = [
 ]
 
 MAX_SAMPLE_QUERIES = 12
-CONTROL_FLUSH_EVERY = 1
+CONTROL_FLUSH_EVERY = max(get_settings().sisap_control_flush_every, 1)
 OUTPUT_FLUSH_EVERY = 1
 USE_LOCAL_DELTA_STAGING = False
 _NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
