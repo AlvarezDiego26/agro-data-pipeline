@@ -79,7 +79,6 @@ services:
     working_dir: /app
     command: >
       bash -c "
-        command -v docker >/dev/null 2>&1 || (apt-get update && apt-get install -y docker.io) &&
         cd /app/orquestacion-prefect &&
         pip install -e . &&
         prefect worker start --pool local-pool --type process --limit $${PREFECT_WORKER_PROCESS_LIMIT:-1}
