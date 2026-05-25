@@ -150,10 +150,7 @@ def _module_specs() -> dict[str, ModuleRunSpec]:
         ),
         'precios': ModuleRunSpec(
             scope_name='procedencia',
-            iter_values_getter=lambda: (
-                ['consolidado'] if settings.sisap_mercado_codigo == '*' 
-                else settings.procedencias_resueltas
-            ),
+            iter_values_getter=lambda: ['consolidado'],
             scope_attr='sisap_procedencia_nombre',
             runner=_run_precios,
         ),

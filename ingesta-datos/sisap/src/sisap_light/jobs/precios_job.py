@@ -41,7 +41,6 @@ EXPECTED_COLUMNS = [
     'producto_codigo',
     'producto_nombre',
     'variedad',
-    'procedencia',
     'precio_min',
     'precio_prom',
     'precio_max',
@@ -78,7 +77,7 @@ def _build_raw_plan(
                 output_name='precios_diarios_mercado_lima',
                 modulo=ModuloSisap.MAYORISTA_PRECIOS,
                 mercado=mercado,
-                procedencia=procedencia,
+                procedencia=None,
                 productos_override=productos_override,
             )
         )
@@ -180,7 +179,7 @@ def run_full(
             finalize_staged_delta_output(
                 output_name='precios_diarios_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
-                sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'fecha'],
                 append_only=append_only_delta,
             )
         logger.info('No hay queries pendientes para precios.')
@@ -223,7 +222,7 @@ def run_full(
                     accumulated_frames,
                     output_name='precios_diarios_mercado_lima',
                     expected_columns=EXPECTED_COLUMNS,
-                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'fecha'],
                     staging_run_id=staging_run_id,
                     shard_id=shard.shard_id,
                 )
@@ -232,7 +231,7 @@ def run_full(
                     finalize_staged_delta_output(
                         output_name='precios_diarios_mercado_lima',
                         expected_columns=EXPECTED_COLUMNS,
-                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                        sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'fecha'],
                         append_only=append_only_delta,
                         run_id=staging_run_id,
                     )
@@ -286,7 +285,7 @@ def run_full(
                                     accumulated_frames,
                                     output_name='precios_diarios_mercado_lima',
                                     expected_columns=EXPECTED_COLUMNS,
-                                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                                    sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'fecha'],
                                     staging_run_id=staging_run_id,
                                     shard_id=shard.shard_id,
                                 )
@@ -325,7 +324,7 @@ def run_full(
                             accumulated_frames,
                             output_name='precios_diarios_mercado_lima',
                             expected_columns=EXPECTED_COLUMNS,
-                            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                            sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'fecha'],
                             staging_run_id=staging_run_id,
                             shard_id=shard.shard_id,
                         )
