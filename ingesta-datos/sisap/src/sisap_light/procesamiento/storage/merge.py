@@ -9,7 +9,6 @@ DATASET_BUSINESS_KEYS = {
         "mercado_codigo",
         "producto_codigo",
         "variedad",
-        "procedencia",
     ],
     "volumen_diario_mercado_lima": [
         "fecha",
