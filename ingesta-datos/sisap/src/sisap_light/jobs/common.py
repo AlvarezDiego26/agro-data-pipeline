@@ -332,10 +332,12 @@ def resolve_productos_for_mercado_mayorista(mercado_codigo: str) -> list[dict]:
         discovered = _filter_productos_catalogo_agricola(discovered)
 
     if not discovered:
-        raise ValueError(
-            f'No quedaron productos agricolas validos para el mercado {mercado_codigo} '
-            'despues de aplicar el catalogo permitido.'
+        logger.warning(
+            'Se omite mercado {} porque no quedaron productos agricolas validos despues '
+            'de aplicar el catalogo permitido.',
+            mercado_codigo,
         )
+        return []
 
     return apply_producto_filters(discovered)
 
@@ -733,6 +735,16 @@ def expand_mayorista_plan_for_procedencia(
         productos_mercado = apply_producto_filters(list(productos_override))
     else:
         productos_mercado = resolve_productos_for_mercado_mayorista(mercado['codigo'])
+
+    if not productos_mercado:
+        logger.warning(
+            'No se generaran queries para mercado={} nombre="{}" porque no tiene productos '
+            'agricolas validos para el modulo {}.',
+            mercado['codigo'],
+            mercado.get('nombre', ''),
+            modulo.value,
+        )
+        return []
 
     if procedencia is None:
         scope_label = 'volumen_mercado'
