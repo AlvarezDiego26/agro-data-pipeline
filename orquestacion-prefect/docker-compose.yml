@@ -83,7 +83,12 @@ services:
         pip install -e . &&
         prefect worker start --pool local-pool --type process --limit $${PREFECT_WORKER_PROCESS_LIMIT:-1}
       "
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     restart: unless-stopped
+
 
 volumes:
   postgres_data:
