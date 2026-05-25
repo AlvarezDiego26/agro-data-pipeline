@@ -591,26 +591,18 @@ def resolve_query_dates(
             control_min_loaded = control_state.get('fecha_minima_exitosa')
             control_max_loaded = control_state.get('fecha_maxima_exitosa')
 
-    data_min_loaded, data_max_loaded = get_loaded_date_bounds(
-        output_name,
-        scope_label,
-        scope_value,
-        producto_codigo,
-        producto_nombre,
-        mercado_codigo,
-    )
-
-    # Preferimos la data escrita cuando existe, pero si una cobertura historica
-    # fue validada solo con queries vacias, la tabla de control debe evitar
-    # relanzar el mismo backfill completo en corridas posteriores.
-    has_materialized_data = data_max_loaded is not None
-    min_loaded = data_min_loaded if has_materialized_data else control_min_loaded
-    max_loaded = data_max_loaded if has_materialized_data else control_max_loaded
-    last_loaded = data_max_loaded if has_materialized_data else control_last_loaded
+    # En SISAP confiamos en la tabla de control para reanudar backfills e
+    # incrementales. Evitamos escanear la data materializada para no depender de
+    # lecturas extra sobre Delta/MinIO y para no contradecir el estado del
+    # control cuando una corrida historica materializa ceros.
+    has_materialized_data = False
+    min_loaded = control_min_loaded
+    max_loaded = control_max_loaded
+    last_loaded = control_last_loaded
 
     if last_loaded is None:
         logger.info(
-            'No se encontro data previa materializada ni cobertura valida en control para {} {}. '
+            'No se encontro cobertura valida en control para {} {}. '
             'Iniciando carga historica desde la fecha configurada: {}',
             output_name,
             producto_codigo,
@@ -639,15 +631,14 @@ def resolve_query_dates(
     if not settings.is_incremental:
         return fecha_inicio, fecha_fin
 
-    if not has_materialized_data:
-        logger.info(
-            'No se encontro data previa materializada para {} {}, pero se reutilizara la cobertura '
-            'registrada en la tabla de control (ultima={}, historico_completo={}).',
-            output_name,
-            producto_codigo,
-            last_loaded,
-            history_complete,
-        )
+    logger.info(
+        'Se reutilizara la cobertura registrada en control para {} {} '
+        '(ultima={}, historico_completo={}).',
+        output_name,
+        producto_codigo,
+        last_loaded,
+        history_complete,
+    )
 
     if min_loaded is not None and min_loaded > fecha_inicio:
         if history_complete:

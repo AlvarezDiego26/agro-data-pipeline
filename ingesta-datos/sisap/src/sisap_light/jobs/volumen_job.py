@@ -60,6 +60,7 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = 20
 OUTPUT_FLUSH_EVERY = 20
+USE_LOCAL_DELTA_STAGING = False
 _NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
 _DATE_VALUE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
@@ -205,7 +206,12 @@ def run_full(
     scope_value = procedencia_nombre or 'consolidado'
     scope_label = 'procedencia' if procedencia_nombre else 'volumen_mercado'
     if not plan:
-        if finalize_delta and settings.delta_enabled and has_staged_delta_output('volumen_diario_mercado_lima'):
+        if (
+            finalize_delta
+            and settings.delta_enabled
+            and USE_LOCAL_DELTA_STAGING
+            and has_staged_delta_output('volumen_diario_mercado_lima')
+        ):
             finalize_staged_delta_output(
                 output_name='volumen_diario_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
@@ -217,7 +223,11 @@ def run_full(
     errores: list[dict[str, str]] = []
     output = build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
-    staging_run_id = build_delta_staging_run_id('volumen_diario_mercado_lima') if settings.delta_enabled else None
+    staging_run_id = (
+        build_delta_staging_run_id('volumen_diario_mercado_lima')
+        if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
+        else None
+    )
 
     shards = build_grouped_shards(
         plan,
@@ -386,7 +396,7 @@ def run_full(
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if finalize_delta and settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
         finalize_staged_delta_output(
             output_name='volumen_diario_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,

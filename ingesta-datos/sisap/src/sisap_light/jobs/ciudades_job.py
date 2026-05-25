@@ -71,6 +71,7 @@ EXPECTED_COLUMNS_MIN = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = 20
 OUTPUT_FLUSH_EVERY = 20
+USE_LOCAL_DELTA_STAGING = False
 
 
 def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
@@ -259,7 +260,12 @@ def run_full(
     region = _resolve_region(region_nombre)
     plan = filter_plan(_build_raw_plan(modulo, region['nombre']), settings.sisap_max_queries)
     if not plan:
-        if finalize_delta and settings.delta_enabled and has_staged_delta_output(_output_name(modulo)):
+        if (
+            finalize_delta
+            and settings.delta_enabled
+            and USE_LOCAL_DELTA_STAGING
+            and has_staged_delta_output(_output_name(modulo))
+        ):
             finalize_staged_delta_output(
                 output_name=_output_name(modulo),
                 expected_columns=_expected_columns(modulo),
@@ -272,7 +278,11 @@ def run_full(
     output_name = _output_name(modulo)
     output = build_scope_output_dir(output_name, 'region', region['nombre'])
     output.mkdir(parents=True, exist_ok=True)
-    staging_run_id = build_delta_staging_run_id(output_name) if settings.delta_enabled else None
+    staging_run_id = (
+        build_delta_staging_run_id(output_name)
+        if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
+        else None
+    )
 
     shards = build_grouped_shards(
         plan,
@@ -421,7 +431,7 @@ def run_full(
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if finalize_delta and settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
         finalize_staged_delta_output(
             output_name=output_name,
             expected_columns=_expected_columns(modulo),

@@ -49,6 +49,7 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = 20
 OUTPUT_FLUSH_EVERY = 20
+USE_LOCAL_DELTA_STAGING = False
 
 
 def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
@@ -168,7 +169,12 @@ def run_full(
 
     plan = filter_plan(_build_raw_plan(mercado_nombre, procedencia['nombre'] if procedencia else None), settings.sisap_max_queries)
     if not plan:
-        if finalize_delta and settings.delta_enabled and has_staged_delta_output('precios_diarios_mercado_lima'):
+        if (
+            finalize_delta
+            and settings.delta_enabled
+            and USE_LOCAL_DELTA_STAGING
+            and has_staged_delta_output('precios_diarios_mercado_lima')
+        ):
             finalize_staged_delta_output(
                 output_name='precios_diarios_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
@@ -180,7 +186,11 @@ def run_full(
     errores: list[dict[str, str]] = []
     output = build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
     output.mkdir(parents=True, exist_ok=True)
-    staging_run_id = build_delta_staging_run_id('precios_diarios_mercado_lima') if settings.delta_enabled else None
+    staging_run_id = (
+        build_delta_staging_run_id('precios_diarios_mercado_lima')
+        if settings.delta_enabled and USE_LOCAL_DELTA_STAGING
+        else None
+    )
 
     shards = build_grouped_shards(
         plan,
@@ -344,7 +354,7 @@ def run_full(
     for shard_errors in shard_error_groups:
         errores.extend(shard_errors)
 
-    if finalize_delta and settings.delta_enabled and staging_run_id:
+    if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
         finalize_staged_delta_output(
             output_name='precios_diarios_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,
