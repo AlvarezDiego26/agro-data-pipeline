@@ -49,7 +49,7 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = max(get_settings().sisap_control_flush_every, 1)
 OUTPUT_FLUSH_EVERY = max(get_settings().sisap_output_flush_every, 1)
-USE_LOCAL_DELTA_STAGING = False
+USE_LOCAL_DELTA_STAGING = get_settings().sisap_use_local_delta_staging
 
 
 def _resolve_procedencia(procedencia_nombre: str | None = None) -> dict:
@@ -158,6 +158,7 @@ def run_full(
     finalize_delta: bool = True,
 ) -> Path:
     settings = get_settings()
+    append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
     
     # Si el mercado es '*', forzamos procedencia=None para reporte consolidado
     if settings.sisap_mercado_codigo == '*':
@@ -179,6 +180,7 @@ def run_full(
                 output_name='precios_diarios_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
                 sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                append_only=append_only_delta,
             )
         logger.info('No hay queries pendientes para precios.')
         return build_scope_output_dir('precios_diarios_mercado_lima', scope_label, scope_value)
@@ -359,6 +361,7 @@ def run_full(
             output_name='precios_diarios_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            append_only=append_only_delta,
         )
 
     if errores:

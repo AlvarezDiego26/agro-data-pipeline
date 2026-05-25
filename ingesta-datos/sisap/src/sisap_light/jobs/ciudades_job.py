@@ -71,7 +71,7 @@ EXPECTED_COLUMNS_MIN = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = max(get_settings().sisap_control_flush_every, 1)
 OUTPUT_FLUSH_EVERY = max(get_settings().sisap_output_flush_every, 1)
-USE_LOCAL_DELTA_STAGING = False
+USE_LOCAL_DELTA_STAGING = get_settings().sisap_use_local_delta_staging
 
 
 def _flush_control_batch(control_states: dict, event_rows: list[dict[str, object]]) -> None:
@@ -257,6 +257,7 @@ def run_full(
     finalize_delta: bool = True,
 ) -> Path:
     settings = get_settings()
+    append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
     region = _resolve_region(region_nombre)
     plan = filter_plan(_build_raw_plan(modulo, region['nombre']), settings.sisap_max_queries)
     if not plan:
@@ -270,6 +271,7 @@ def run_full(
                 output_name=_output_name(modulo),
                 expected_columns=_expected_columns(modulo),
                 sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                append_only=append_only_delta,
             )
         logger.info('No hay queries pendientes para {}.', _output_name(modulo))
         return build_scope_output_dir(_output_name(modulo), 'region', region['nombre'])
@@ -436,6 +438,7 @@ def run_full(
             output_name=output_name,
             expected_columns=_expected_columns(modulo),
             sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+            append_only=append_only_delta,
         )
 
     if errores:

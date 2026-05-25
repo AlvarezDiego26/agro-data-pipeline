@@ -101,6 +101,7 @@ def _finalize_module_delta_outputs(modulo: str) -> None:
             output_name='precios_diarios_mercado_lima',
             expected_columns=PRECIOS_EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            append_only=append_only_backfill,
         )
     elif modulo == 'ciudades-mayoristas':
         output_name = ciudades_output_name(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS)
@@ -109,6 +110,7 @@ def _finalize_module_delta_outputs(modulo: str) -> None:
                 output_name=output_name,
                 expected_columns=ciudades_expected_columns(ModuloSisap.CIUDADES_PRECIOS_MAYORISTAS),
                 sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                append_only=append_only_backfill,
             )
     elif modulo == 'ciudades-minoristas':
         output_name = ciudades_output_name(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS)
@@ -117,6 +119,7 @@ def _finalize_module_delta_outputs(modulo: str) -> None:
                 output_name=output_name,
                 expected_columns=ciudades_expected_columns(ModuloSisap.CIUDADES_PRECIOS_MINORISTAS),
                 sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                append_only=append_only_backfill,
             )
     elif modulo == 'regiones':
         for ciudades_modulo in (
@@ -129,6 +132,7 @@ def _finalize_module_delta_outputs(modulo: str) -> None:
                     output_name=output_name,
                     expected_columns=ciudades_expected_columns(ciudades_modulo),
                     sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                    append_only=append_only_backfill,
                 )
 
 
