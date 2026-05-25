@@ -1,8 +1,12 @@
 import httpx
 from loguru import logger
 from tenacity import Retrying, stop_after_attempt, wait_exponential
+from threading import Lock
 
 from sisap_light.config import get_settings
+
+_SHARED_CLIENT = None
+_SHARED_CLIENT_LOCK = Lock()
 
 
 class SisapHttpClient:
@@ -10,7 +14,19 @@ class SisapHttpClient:
         settings = get_settings()
         self.timeout = settings.sisap_timeout_seconds
         self.retry_intentos = settings.sisap_retry_intentos
-        self._client = httpx.Client(timeout=self.timeout, follow_redirects=True)
+
+        global _SHARED_CLIENT
+        with _SHARED_CLIENT_LOCK:
+            if _SHARED_CLIENT is None:
+                # Usamos límites razonables para la reutilización de conexiones en el pool
+                limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+                _SHARED_CLIENT = httpx.Client(
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                    limits=limits
+                )
+
+        self._client = _SHARED_CLIENT
         self.retry_policy = Retrying(
             stop=stop_after_attempt(max(int(self.retry_intentos or 1), 1)),
             wait=wait_exponential(multiplier=1, min=1, max=8),
@@ -36,11 +52,10 @@ class SisapHttpClient:
         return self.retry_policy(_request)
 
     def close(self) -> None:
-        self._client.close()
+        # El cliente compartido no se cierra para que otros hilos puedan seguir usándolo.
+        # Se liberará automáticamente al terminar el proceso de ejecución de la CLI.
+        pass
 
     def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
+        pass
 
