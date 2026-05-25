@@ -1095,7 +1095,7 @@ def _build_historical_zero_frame_precios(query) -> pl.DataFrame:
             'producto_codigo': query.producto_codigo,
             'producto_nombre': query.producto_nombre,
             'variedad': query.producto_nombre,
-            'procedencia': '',
+            'procedencia': query.procedencia_nombre or 'Consolidado',
             'procedencia_filtro_codigo': query.procedencia_codigo or '000000',
             'procedencia_filtro_nombre': query.procedencia_nombre or 'TODOS',
             'mercado_codigo': query.mercado_codigo or '',
