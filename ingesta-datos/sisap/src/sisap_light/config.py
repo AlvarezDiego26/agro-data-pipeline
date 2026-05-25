@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     sisap_recent_monthly_lookback_months: int = 18
     sisap_save_debug_html: bool = False
     sisap_control_flush_every: int = 25
+    sisap_output_flush_every: int = 5
     delta_write_pause_seconds: int = 0
 
     storage_backend: str = 'local'
