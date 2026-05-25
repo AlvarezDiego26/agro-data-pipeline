@@ -161,7 +161,7 @@ def run_full(
     append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
     
     # Si el mercado es '*', forzamos procedencia=None para reporte consolidado
-    if settings.sisap_mercado_codigo == '*':
+    if settings.sisap_mercado_codigo == '*' or procedencia_nombre == 'consolidado' or procedencia_nombre is None:
         procedencia = None
         scope_label, scope_value = 'volumen_mercado', 'consolidado'
     else:
