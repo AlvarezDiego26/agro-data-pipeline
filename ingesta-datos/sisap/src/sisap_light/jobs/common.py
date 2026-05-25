@@ -283,6 +283,34 @@ def discover_productos_mercado_mayorista(mercado_codigo: str) -> list[dict]:
     return productos
 
 
+def _filter_productos_catalogo_agricola(productos: list[dict]) -> list[dict]:
+    catalogo_por_codigo = {
+        item['codigo']: item
+        for item in PRODUCTOS_AGRICOLAS_PRIORITARIOS
+    }
+    filtered: list[dict] = []
+    excluded: list[str] = []
+    for item in productos:
+        catalog_item = catalogo_por_codigo.get(item['codigo'])
+        if catalog_item is None:
+            excluded.append(f"{item['codigo']}:{item['nombre']}")
+            continue
+        filtered.append(
+            {
+                'codigo': catalog_item['codigo'],
+                'nombre': catalog_item['nombre'],
+                'categoria': catalog_item.get('categoria'),
+            }
+        )
+    if excluded:
+        logger.info(
+            'Se excluyeron {} productos no agricolas del catalogo descubierto de SISAP: {}',
+            len(excluded),
+            ', '.join(excluded[:12]),
+        )
+    return filtered
+
+
 def resolve_productos_for_mercado_mayorista(mercado_codigo: str) -> list[dict]:
     try:
         discovered = discover_productos_mercado_mayorista(mercado_codigo)
@@ -300,6 +328,14 @@ def resolve_productos_for_mercado_mayorista(mercado_codigo: str) -> list[dict]:
             mercado_codigo,
         )
         discovered = list(PRODUCTOS_AGRICOLAS_PRIORITARIOS)
+    else:
+        discovered = _filter_productos_catalogo_agricola(discovered)
+
+    if not discovered:
+        raise ValueError(
+            f'No quedaron productos agricolas validos para el mercado {mercado_codigo} '
+            'despues de aplicar el catalogo permitido.'
+        )
 
     return apply_producto_filters(discovered)
 
