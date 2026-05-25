@@ -1189,6 +1189,7 @@ def finalize_staged_delta_output(
     output_name: str,
     expected_columns: list[str],
     sort_columns: list[str],
+    append_only: bool = False,
 ) -> str:
     staging_root = _build_delta_staging_root(output_name)
     if not staging_root.exists():
@@ -1212,7 +1213,12 @@ def finalize_staged_delta_output(
         expected_columns,
         sort_columns,
     )
-    result = save_delta_table(final_df, output_name, ['fecha_particion'])
+    result = save_delta_table(
+        final_df,
+        output_name,
+        ['fecha_particion'],
+        append_only=append_only,
+    )
     shutil.rmtree(staging_root, ignore_errors=True)
     return result
 

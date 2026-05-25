@@ -86,11 +86,15 @@ def _run_regiones(_: str, finalize_delta: bool = True) -> str:
 
 
 def _finalize_module_delta_outputs(modulo: str) -> None:
+    settings = get_settings()
+    append_only_backfill = settings.is_backfill and settings.sisap_delta_append_only_backfill
+
     if modulo == 'volumen' and has_staged_delta_output('volumen_diario_mercado_lima'):
         finalize_staged_delta_output(
             output_name='volumen_diario_mercado_lima',
             expected_columns=VOLUMEN_EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            append_only=append_only_backfill,
         )
     elif modulo == 'precios' and has_staged_delta_output('precios_diarios_mercado_lima'):
         finalize_staged_delta_output(

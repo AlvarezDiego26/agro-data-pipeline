@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     sisap_save_debug_html: bool = False
     sisap_control_flush_every: int = 25
     sisap_output_flush_every: int = 5
+    sisap_use_local_delta_staging: bool = False
+    sisap_delta_append_only_backfill: bool = False
     delta_write_pause_seconds: int = 0
 
     storage_backend: str = 'local'

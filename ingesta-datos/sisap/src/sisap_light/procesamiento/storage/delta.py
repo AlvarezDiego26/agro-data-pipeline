@@ -117,7 +117,13 @@ def _run_delta_write_with_retry(
             sleep(wait_seconds)
 
 
-def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[str]) -> str:
+def save_delta_table(
+    df: pl.DataFrame,
+    dataset_name: str,
+    partition_cols: list[str],
+    *,
+    append_only: bool = False,
+) -> str:
     if df.is_empty():
         logger.warning("Delta skip: dataframe vacio para {}", dataset_name)
         return ""
@@ -145,6 +151,31 @@ def save_delta_table(df: pl.DataFrame, dataset_name: str, partition_cols: list[s
 
         try:
             if existing_table is not None:
+                if append_only:
+                    _run_delta_write_with_retry(
+                        lambda: write_deltalake(
+                            table_uri,
+                            source_df.to_arrow(),
+                            mode="append",
+                            partition_by=partition_cols,
+                            storage_options=storage_options,
+                            engine="rust",
+                        ),
+                        dataset_name=dataset_name,
+                        table_uri=table_uri,
+                        settings=settings,
+                    )
+                    logger.info("Delta append OK dataset={} uri={}", dataset_name, table_uri)
+                    if write_pause_seconds:
+                        logger.info(
+                            "Delta write pause dataset={} uri={} seconds={}",
+                            dataset_name,
+                            table_uri,
+                            write_pause_seconds,
+                        )
+                        sleep(write_pause_seconds)
+                    return table_uri
+
                 if not merge_predicate:
                     raise ValueError(
                         f"No se puede hacer merge incremental en '{dataset_name}': "

@@ -60,7 +60,7 @@ EXPECTED_COLUMNS = [
 MAX_SAMPLE_QUERIES = 12
 CONTROL_FLUSH_EVERY = max(get_settings().sisap_control_flush_every, 1)
 OUTPUT_FLUSH_EVERY = max(get_settings().sisap_output_flush_every, 1)
-USE_LOCAL_DELTA_STAGING = False
+USE_LOCAL_DELTA_STAGING = get_settings().sisap_use_local_delta_staging
 _NUMERIC_VALUE_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
 _DATE_VALUE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
@@ -199,6 +199,7 @@ def run_full(
     finalize_delta: bool = True,
 ) -> Path:
     settings = get_settings()
+    append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
     if settings.sisap_mercado_codigo == '*':
         procedencia_nombre = None
 
@@ -216,6 +217,7 @@ def run_full(
                 output_name='volumen_diario_mercado_lima',
                 expected_columns=EXPECTED_COLUMNS,
                 sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+                append_only=append_only_delta,
             )
         logger.info('No hay queries pendientes para volumen.')
         return build_scope_output_dir('volumen_diario_mercado_lima', scope_label, scope_value)
@@ -401,6 +403,7 @@ def run_full(
             output_name='volumen_diario_mercado_lima',
             expected_columns=EXPECTED_COLUMNS,
             sort_columns=['mercado_codigo', 'producto_codigo', 'variedad', 'procedencia', 'fecha'],
+            append_only=append_only_delta,
         )
 
     if errores:
