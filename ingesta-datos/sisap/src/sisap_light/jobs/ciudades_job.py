@@ -259,11 +259,12 @@ def run_full(
 ) -> Path:
     settings = get_settings()
     append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
+    should_finalize_delta = finalize_delta and not settings.sisap_defer_delta_finalize
     region = _resolve_region(region_nombre)
     plan = filter_plan(_build_raw_plan(modulo, region['nombre']), settings.sisap_max_queries)
     if not plan:
         if (
-            finalize_delta
+            should_finalize_delta
             and settings.delta_enabled
             and USE_LOCAL_DELTA_STAGING
             and has_staged_delta_output(_output_name(modulo))
@@ -320,7 +321,7 @@ def run_full(
                     shard_id=shard.shard_id,
                 )
                 pending_output_frames = 0
-                if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
+                if should_finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
                     finalize_staged_delta_output(
                         output_name=output_name,
                         expected_columns=_expected_columns(modulo),

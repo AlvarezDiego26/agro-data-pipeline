@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     sisap_timeout_seconds: int = 30
     sisap_retry_intentos: int = 3
     sisap_retry_espera_segundos: int = 3
-    delta_retry_intentos_429: int = 3
+    delta_retry_intentos_429: int = 8
     delta_retry_espera_segundos_429: int = 30
     sisap_fecha_inicio: str = '2016-01-01'
     sisap_fecha_fin: str = ''
@@ -67,10 +67,11 @@ class Settings(BaseSettings):
     sisap_historical_chunk_months: int = 6
     sisap_recent_monthly_lookback_months: int = 18
     sisap_save_debug_html: bool = False
-    sisap_control_flush_every: int = 25
-    sisap_output_flush_every: int = 5
-    sisap_delta_finalize_every_items: int = 20
-    sisap_use_local_delta_staging: bool = False
+    sisap_control_flush_every: int = 100
+    sisap_output_flush_every: int = 25
+    sisap_delta_finalize_every_items: int = 200
+    sisap_use_local_delta_staging: bool = True
+    sisap_defer_delta_finalize: bool = True
     sisap_delta_append_only_backfill: bool = False
     delta_write_pause_seconds: int = 0
 

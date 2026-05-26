@@ -201,6 +201,7 @@ def run_full(
 ) -> Path:
     settings = get_settings()
     append_only_delta = settings.is_backfill and settings.sisap_delta_append_only_backfill
+    should_finalize_delta = finalize_delta and not settings.sisap_defer_delta_finalize
     if settings.sisap_mercado_codigo == '*':
         procedencia_nombre = None
 
@@ -209,7 +210,7 @@ def run_full(
     scope_label = 'procedencia' if procedencia_nombre else 'volumen_mercado'
     if not plan:
         if (
-            finalize_delta
+            should_finalize_delta
             and settings.delta_enabled
             and USE_LOCAL_DELTA_STAGING
             and has_staged_delta_output('volumen_diario_mercado_lima')
@@ -265,7 +266,7 @@ def run_full(
                     shard_id=shard.shard_id,
                 )
                 pending_output_frames = 0
-                if finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
+                if should_finalize_delta and settings.delta_enabled and USE_LOCAL_DELTA_STAGING and staging_run_id:
                     finalize_staged_delta_output(
                         output_name='volumen_diario_mercado_lima',
                         expected_columns=EXPECTED_COLUMNS,

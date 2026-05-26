@@ -136,6 +136,23 @@ def _finalize_module_delta_outputs(modulo: str) -> None:
                 )
 
 
+def finalize_pipeline_delta_outputs(modulos: list[str] | None = None) -> list[str]:
+    settings = get_settings()
+    requested_modules = modulos or settings.modulos_resueltos
+    finalized: list[str] = []
+
+    if settings.delta_enabled:
+        warm_delta_runtime()
+
+    for modulo in requested_modules:
+        _finalize_module_delta_outputs(modulo)
+        finalized.append(modulo)
+
+    if settings.sisap_use_control_table:
+        _sync_control_queues()
+    return finalized
+
+
 def _module_specs() -> dict[str, ModuleRunSpec]:
     settings = get_settings()
     return {
@@ -210,7 +227,7 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> t
         and settings.scope_max_workers > 1
         and len(scope_values) > 1
     )
-    finalize_delta_per_scope = not use_parallel_scopes
+    finalize_delta_per_scope = not use_parallel_scopes and not settings.sisap_defer_delta_finalize
 
     def run_scope(scope_value: str) -> str:
         logger.info('Ejecutando {} para {}={}', modulo, spec.scope_name, scope_value)
@@ -259,7 +276,7 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> t
                 error_message = f'{modulo} [{spec.scope_name}={scope_value}] -> ERROR: {exc}'
                 resultados.append(error_message)
                 errores.append(error_message)
-    if use_parallel_scopes:
+    if use_parallel_scopes and not settings.sisap_defer_delta_finalize:
         _finalize_module_delta_outputs(modulo)
     return resultados, errores
 

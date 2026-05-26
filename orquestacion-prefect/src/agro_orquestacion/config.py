@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     sisap_scope_max_workers: int = 1
     sisap_shard_max_workers: int = 1
     sisap_product_batch_size: int = 1
+    sisap_control_flush_every: int = 100
+    sisap_output_flush_every: int = 25
+    sisap_delta_finalize_every_items: int = 200
+    sisap_use_local_delta_staging: bool = True
+    sisap_defer_delta_finalize: bool = True
 
     sunat_fecha_corte_inicio: str = "2016-01-01"
     sunat_fecha_corte_fin: str = ""
@@ -184,6 +189,11 @@ class Settings(BaseSettings):
             "SISAP_SHARD_MAX_WORKERS": str(self.sisap_shard_max_workers),
             "SISAP_PRODUCT_BATCH_SIZE": str(self.sisap_product_batch_size),
             "SISAP_USE_CONTROL_TABLE": str(self.sisap_use_control_table).lower(),
+            "SISAP_CONTROL_FLUSH_EVERY": str(self.sisap_control_flush_every),
+            "SISAP_OUTPUT_FLUSH_EVERY": str(self.sisap_output_flush_every),
+            "SISAP_DELTA_FINALIZE_EVERY_ITEMS": str(self.sisap_delta_finalize_every_items),
+            "SISAP_USE_LOCAL_DELTA_STAGING": str(self.sisap_use_local_delta_staging).lower(),
+            "SISAP_DEFER_DELTA_FINALIZE": str(self.sisap_defer_delta_finalize).lower(),
         }
         if self.sisap_max_scopes is not None:
             env["SISAP_MAX_SCOPES"] = str(self.sisap_max_scopes)

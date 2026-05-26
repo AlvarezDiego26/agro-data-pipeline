@@ -7,7 +7,7 @@ from sisap_light.jobs.ciudades_job import (
     run_full as run_ciudades_full,
     run_sample as run_ciudades_sample,
 )
-from sisap_light.jobs.master_job import run_pipeline_main
+from sisap_light.jobs.master_job import finalize_pipeline_delta_outputs, run_pipeline_main
 from sisap_light.jobs.precios_job import build_plan as build_precios_plan
 from sisap_light.jobs.precios_job import run_full as run_precios_full
 from sisap_light.jobs.precios_job import run_sample as run_precios_sample
@@ -146,6 +146,24 @@ def _echo_pipeline_summary(result: dict[str, object]) -> None:
             'Cache local de eventos de control: '
             f"{result['control_status']['pending_events_path']}"
         )
+
+
+@app.command('finalize-staged')
+def finalize_staged_command(
+    modulos: str | None = typer.Option(
+        None,
+        '--modulos',
+        help='Lista CSV de modulos a consolidar (ej. volumen,precios). Por defecto usa la configuracion actual.',
+    ),
+) -> None:
+    settings = get_settings()
+    requested_modules = (
+        [item.strip() for item in modulos.split(',') if item.strip()]
+        if modulos
+        else settings.modulos_resueltos
+    )
+    finalized = _run_and_report(lambda: finalize_pipeline_delta_outputs(requested_modules))
+    typer.echo(f'Modulos consolidados: {", ".join(finalized)}')
 
 
 @app.command('run-main')
