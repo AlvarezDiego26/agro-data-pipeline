@@ -456,10 +456,12 @@ def run_full(
             gc.collect()
         return shard_errors
 
+    # Regiones comparte una sola salida Delta entre mayorista y minorista; mantener
+    # los shards en serie evita contencion innecesaria en control y staging.
     shard_error_groups = run_shards(
         shards,
         process_shard,
-        max_workers=settings.shard_max_workers if settings.parallel_enabled else 1,
+        max_workers=1,
         label=f'{output_name}/region={region["nombre"]}',
     )
     for shard_errors in shard_error_groups:

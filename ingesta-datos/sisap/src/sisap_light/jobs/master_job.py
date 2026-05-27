@@ -39,6 +39,10 @@ class ModuleRunSpec:
     runner: Callable[[str, bool], str]
 
 
+def _uses_shared_regional_output(modulo: str) -> bool:
+    return modulo in {'regiones', 'ciudades-mayoristas', 'ciudades-minoristas'}
+
+
 def _run_volumen(_: str, finalize_delta: bool = True) -> str:
     return str(run_volumen_full(procedencia_nombre=_, finalize_delta=finalize_delta))
 
@@ -227,6 +231,12 @@ def _run_module_scope(modulo: str, spec: ModuleRunSpec, pause_seconds: int) -> t
         and settings.scope_max_workers > 1
         and len(scope_values) > 1
     )
+    if use_parallel_scopes and _uses_shared_regional_output(modulo):
+        logger.info(
+            'Se fuerza ejecucion serial para {} porque comparte la salida precio_diario_regiones.',
+            modulo,
+        )
+        use_parallel_scopes = False
     finalize_delta_per_scope = not use_parallel_scopes and not settings.sisap_defer_delta_finalize
 
     def run_scope(scope_value: str) -> str:
