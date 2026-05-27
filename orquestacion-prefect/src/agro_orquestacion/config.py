@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     sisap_delta_finalize_every_items: int = 200
     sisap_use_local_delta_staging: bool = True
     sisap_defer_delta_finalize: bool = True
+    sisap_regiones_pipeline_enabled: bool = True
+    sisap_regiones_shard_max_workers: int = 5
 
     sunat_fecha_corte_inicio: str = "2016-01-01"
     sunat_fecha_corte_fin: str = ""
@@ -194,6 +196,8 @@ class Settings(BaseSettings):
             "SISAP_DELTA_FINALIZE_EVERY_ITEMS": str(self.sisap_delta_finalize_every_items),
             "SISAP_USE_LOCAL_DELTA_STAGING": str(self.sisap_use_local_delta_staging).lower(),
             "SISAP_DEFER_DELTA_FINALIZE": str(self.sisap_defer_delta_finalize).lower(),
+            "SISAP_REGIONES_PIPELINE_ENABLED": str(self.sisap_regiones_pipeline_enabled).lower(),
+            "SISAP_REGIONES_SHARD_MAX_WORKERS": str(self.sisap_regiones_shard_max_workers),
         }
         if self.sisap_max_scopes is not None:
             env["SISAP_MAX_SCOPES"] = str(self.sisap_max_scopes)

@@ -456,12 +456,24 @@ def run_full(
             gc.collect()
         return shard_errors
 
-    # Regiones comparte una sola salida Delta entre mayorista y minorista; mantener
-    # los shards en serie evita contencion innecesaria en control y staging.
+    regional_pipeline_enabled = (
+        output_name == 'precio_diario_regiones'
+        and settings.sisap_regiones_pipeline_enabled
+        and settings.parallel_enabled
+    )
+    shard_workers = settings.regiones_shard_max_workers if regional_pipeline_enabled else 1
+    if regional_pipeline_enabled:
+        logger.info(
+            'Pipeline regional habilitado para {} region={}: {} shards en paralelo con staging local diferido.',
+            output_name,
+            region['nombre'],
+            shard_workers,
+        )
+
     shard_error_groups = run_shards(
         shards,
         process_shard,
-        max_workers=1,
+        max_workers=shard_workers,
         label=f'{output_name}/region={region["nombre"]}',
     )
     for shard_errors in shard_error_groups:

@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     sisap_delta_finalize_every_items: int = 200
     sisap_use_local_delta_staging: bool = True
     sisap_defer_delta_finalize: bool = True
+    sisap_regiones_pipeline_enabled: bool = True
+    sisap_regiones_shard_max_workers: int = 5
     sisap_delta_append_only_backfill: bool = False
     delta_write_pause_seconds: int = 0
 
@@ -265,6 +267,10 @@ class Settings(BaseSettings):
     @property
     def target_shards_per_scope(self) -> int:
         return max(int(self.sisap_target_shards_per_scope or 1), 1)
+
+    @property
+    def regiones_shard_max_workers(self) -> int:
+        return max(int(self.sisap_regiones_shard_max_workers or 1), 1)
 
     @property
     def historical_chunk_months(self) -> int:
