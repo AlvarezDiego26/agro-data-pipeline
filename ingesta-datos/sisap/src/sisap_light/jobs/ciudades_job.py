@@ -408,7 +408,6 @@ def run_full(
                         pending_event_rows.append(event_row)
                         if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
                             _flush_control_batch(control_states, pending_event_rows)
-                        shard_errors.append({'producto_codigo': query.producto_codigo, 'producto_nombre': query.producto_nombre, 'motivo': 'sin_resultados'})
                         processed_since_finalize += 1
                         if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
                             _finalize_batch()
