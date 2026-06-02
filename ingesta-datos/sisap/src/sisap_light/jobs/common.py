@@ -1159,7 +1159,14 @@ def _prepare_partitioned_output_frame(
     if not frames:
         raise ValueError(f'La corrida parcial de {output_name} no produjo data util.')
 
-    final_df = pl.concat(frames, how='vertical_relaxed')
+    aligned_frames = [
+        frame.select(
+            [column for column in expected_columns if column in frame.columns]
+            + [column for column in frame.columns if column not in expected_columns]
+        )
+        for frame in frames
+    ]
+    final_df = pl.concat(aligned_frames, how='vertical_relaxed')
     final_df = normalize_dataset(final_df, output_name)
     validate_non_empty(final_df, output_name)
     validate_expected_columns(final_df, expected_columns, output_name)
