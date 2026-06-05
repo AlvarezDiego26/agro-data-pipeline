@@ -18,6 +18,7 @@ from sisap_light.jobs.common import (
     flush_accumulated_partitioned_output,
     has_staged_delta_output,
     init_control_states,
+    is_retryable_sisap_fetch_error,
     iter_mercados_ejecucion,
     persist_control_events_batch,
     persist_control_states,
@@ -389,6 +390,32 @@ def run_full(
                     if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
                         _finalize_batch()
                 except Exception as exc:
+                    if is_retryable_sisap_fetch_error(exc):
+                        reason = f'{exc.__class__.__name__}: {exc}'
+                        logger.warning(
+                            'Error transitorio consultando SISAP para volumen mercado={} producto={} codigo={}; '
+                            'se omitira en esta corrida y se reintentara luego. motivo={}',
+                            query.mercado_codigo,
+                            query.producto_nombre,
+                            query.producto_codigo,
+                            reason,
+                        )
+                        event_row = build_control_event_row(
+                            'volumen',
+                            'volumen_diario_mercado_lima',
+                            sl,
+                            sv,
+                            query,
+                            'retryable_error',
+                            reason,
+                        )
+                        pending_event_rows.append(event_row)
+                        if len(pending_event_rows) >= CONTROL_FLUSH_EVERY:
+                            _flush_control_batch(control_states, pending_event_rows)
+                        processed_since_finalize += 1
+                        if processed_since_finalize >= DELTA_FINALIZE_EVERY_ITEMS:
+                            _finalize_batch()
+                        continue
                     logger.exception('Fallo extrayendo volumen para {} ({})', query.producto_nombre, query.producto_codigo)
                     register_control_failure(control_states, 'volumen', 'volumen_diario_mercado_lima', sl, sv, query, str(exc))
                     event_row = build_control_event_row(

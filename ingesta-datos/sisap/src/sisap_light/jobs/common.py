@@ -8,6 +8,7 @@ import shutil
 from uuid import uuid4
 
 import polars as pl
+import httpx
 from loguru import logger
 
 from sisap_light.ingesta_datos.catalogos.productos import PRODUCTOS_AGRICOLAS_PRIORITARIOS
@@ -32,6 +33,10 @@ _CONTROL_STATUS_CACHE: dict[tuple[str, str, str, str, str, str, str], dict[str, 
 _CONTROL_READ_DISABLED = False
 _CONTROL_TABLE_SNAPSHOT: pl.DataFrame | None = None
 _LEGACY_VOLUMEN_BOUNDS_CACHE: dict[str, tuple[date | None, date | None]] = {}
+
+
+def is_retryable_sisap_fetch_error(exc: Exception) -> bool:
+    return isinstance(exc, httpx.TransportError)
 
 
 def _mercado_control_value(mercado_codigo: str | None) -> str:
