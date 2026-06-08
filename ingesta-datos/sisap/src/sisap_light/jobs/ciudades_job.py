@@ -415,6 +415,17 @@ def run_full(
                         continue
                     validate_expected_columns(df, _expected_columns(modulo), f'{output_name}_{query.producto_codigo}')
                     accumulated_frames.setdefault(('region', region['nombre']), []).append(df)
+                    pending_output_frames += 1
+                    if pending_output_frames >= OUTPUT_FLUSH_EVERY:
+                        flush_accumulated_partitioned_output(
+                            accumulated_frames,
+                            output_name=output_name,
+                            expected_columns=_expected_columns(modulo),
+                            sort_columns=['producto_codigo', 'ciudad', 'variedad', 'fecha'],
+                            staging_run_id=staging_run_id,
+                            shard_id=shard.shard_id,
+                        )
+                        pending_output_frames = 0
                     register_control_success(control_states, output_name, output_name, 'region', region['nombre'], query)
                     event_row = build_control_event_row(
                         output_name,
