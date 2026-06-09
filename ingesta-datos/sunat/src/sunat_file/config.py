@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     sunat_download_timeout_seconds: int = 60
     sunat_download_retry_intentos: int = 3
     sunat_download_retry_espera_segundos: int = 5
+    sunat_pipeline_lock_ttl_seconds: int = 21600
     sunat_fecha_corte_inicio: str = '2016-01-01'
     sunat_fecha_corte_fin: str = ''
     sunat_modo_carga: str = 'incremental'

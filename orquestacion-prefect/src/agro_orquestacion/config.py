@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     prefect_work_pool_name: str = ""
     prefect_managed_work_pool_name: str = "agro-managed-pool"
     prefect_process_work_pool_name: str = "agro-process-pool"
-    prefect_sunat_interval_hours: int = 12
+    prefect_sunat_interval_hours: int = 72
     prefect_sisap_master_interval_hours: int = 4
     prefect_enable_schedules: bool = True
     prefect_enable_sisap: bool = True
@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     sunat_fecha_corte_inicio: str = "2016-01-01"
     sunat_fecha_corte_fin: str = ""
     sunat_modo_carga: str = "incremental"
+    sunat_pipeline_lock_ttl_seconds: int = 21600
     midagri_ce_source_url: str = (
         "https://www.gob.pe/institucion/midagri/informes-publicaciones/"
         "2730438-compendio-anual-de-comercio-exterior-agrario"
@@ -221,6 +222,7 @@ class Settings(BaseSettings):
             "SUNAT_FECHA_CORTE_INICIO": self.sunat_fecha_corte_inicio,
             "SUNAT_FECHA_CORTE_FIN": self.sunat_fecha_corte_fin,
             "SUNAT_MODO_CARGA": self.sunat_modo_carga,
+            "SUNAT_PIPELINE_LOCK_TTL_SECONDS": str(self.sunat_pipeline_lock_ttl_seconds),
         }
 
     def midagri_ce_env(self) -> dict[str, str]:

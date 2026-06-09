@@ -89,7 +89,7 @@ async def _serve() -> None:
         tags=["sisap", "regiones", "ingesta"],
     )
     sunat_deployment = sunat_main_flow.to_deployment(
-        name="sunat-cada-6-horas",
+        name="sunat-cada-72-horas",
         interval=timedelta(hours=settings.prefect_sunat_interval_hours),
         concurrency_limit=_deployment_concurrency(settings.prefect_sunat_deployment_concurrency_limit),
         tags=["sunat", "ingesta"],

@@ -39,14 +39,14 @@ def _managed_pythonpath() -> str:
 def _schedule_kwargs(enabled: bool, hours: int, is_sunat: bool = False, minute_offset: int = 0) -> dict[str, any]:
     if not enabled:
         return {"schedule": None}
-    
-    if is_sunat:
-        # SUNAT corre a las 00:05 y 12:05 para no chocar con el inicio de hora
-        return {"schedule": CronSchedule(cron=f"{5 + minute_offset} 0,12 * * *")}
-    
+
+    if is_sunat and hours >= 24 and hours % 24 == 0:
+        days = max(hours // 24, 1)
+        return {"schedule": CronSchedule(cron=f"{5 + minute_offset} 0 */{days} * *")}
+
     # SISAP corre cada 4 horas, pero escalonado por el minuto especificado
     # Ejemplo: minuto 0, 10, 20...
-    return {"schedule": CronSchedule(cron=f"{minute_offset} */4 * * *")}
+    return {"schedule": CronSchedule(cron=f"{minute_offset} */{max(hours, 1)} * * *")}
 def _build_source(settings) -> GitRepository:
     if settings.prefect_github_access_token:
         Secret(value=settings.prefect_github_access_token).save(
